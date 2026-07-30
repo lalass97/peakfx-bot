@@ -132,14 +132,17 @@ def block_bootstrap_expectancy(
     }
 
 
-def period_stability(trades: pd.DataFrame, frequency: str = "QE") -> pd.DataFrame:
+def period_stability(trades: pd.DataFrame, frequency: str = "Q") -> pd.DataFrame:
     """Summarize completed trade performance by quarter or another pandas period frequency."""
     columns = ["period", "trades", "net_pnl", "expectancy", "win_rate_pct", "profit_factor"]
     if trades.empty:
         return pd.DataFrame(columns=columns)
     data = trades.copy()
     data["exit_time"] = pd.to_datetime(data["exit_time"], utc=True)
-    data["period"] = data["exit_time"].dt.to_period(frequency).astype(str)
+    # PeriodIndex does not retain timezone information; remove it explicitly to
+    # avoid warnings while keeping the calendar period unchanged.
+    period_source = data["exit_time"].dt.tz_convert("UTC").dt.tz_localize(None)
+    data["period"] = period_source.dt.to_period(frequency).astype(str)
     rows: list[dict] = []
     for period, group in data.groupby("period", sort=True):
         pnl = group["pnl"].astype(float)
