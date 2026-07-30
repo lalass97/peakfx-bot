@@ -1,7 +1,15 @@
 import numpy as np
 import pandas as pd
+import pytest
 
-from research.backtest_eurusd_h1 import Config, add_indicators, create_signals, run_backtest
+from research.backtest_eurusd_h1 import (
+    Config,
+    _max_consecutive_losses,
+    add_indicators,
+    create_signals,
+    run_backtest,
+    summarize,
+)
 
 
 def sample_bars(rows: int = 400) -> pd.DataFrame:
@@ -43,3 +51,26 @@ def test_backtest_returns_equity_curve() -> None:
     _, curve = run_backtest(sample_bars(), Config())
     assert not curve.empty
     assert "equity" in curve.columns
+
+
+def test_config_rejects_excessive_risk() -> None:
+    with pytest.raises(ValueError, match="Risk fraction"):
+        Config(risk_fraction=0.01).validate()
+
+
+def test_summary_contains_decision_metrics() -> None:
+    trades = pd.DataFrame({"pnl": [100.0, -50.0, -40.0, 120.0]})
+    curve = pd.DataFrame(
+        {"equity": [10_000.0, 10_100.0, 10_050.0, 10_010.0, 10_130.0]},
+        index=pd.date_range("2024-01-01", periods=5, freq="h", tz="UTC"),
+    )
+    result = summarize(trades, curve)
+    assert result["average_win"] == 110.0
+    assert result["average_loss"] == 45.0
+    assert np.isclose(result["expectancy_per_trade"], 32.5)
+    assert result["max_consecutive_losses"] == 2.0
+
+
+def test_max_consecutive_losses_resets_after_win() -> None:
+    trades = pd.DataFrame({"pnl": [-1.0, -1.0, 1.0, -1.0]})
+    assert _max_consecutive_losses(trades) == 2
