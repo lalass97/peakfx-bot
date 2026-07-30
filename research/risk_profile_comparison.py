@@ -14,6 +14,33 @@ RISK_PROFILES: tuple[tuple[str, float], ...] = (
 )
 
 
+_EMPTY_STATS: dict[str, float] = {
+    "trades": 0.0,
+    "net_profit": 0.0,
+    "return_pct": 0.0,
+    "win_rate_pct": 0.0,
+    "average_win": 0.0,
+    "average_loss": 0.0,
+    "payoff_ratio": 0.0,
+    "expectancy_per_trade": 0.0,
+    "profit_factor": 0.0,
+    "max_consecutive_losses": 0.0,
+    "max_drawdown_pct": 0.0,
+    "volatility_pct": 0.0,
+}
+
+
+def _run_or_empty(bars: pd.DataFrame, cfg: Config) -> tuple[pd.DataFrame, dict[str, float]]:
+    """Run the backtest while treating insufficient warm-up data as no trades."""
+    minimum_bars = max(cfg.trend_ema + 7, cfg.slow_ema + 7, cfg.atr_period + 7)
+    if len(bars) < minimum_bars:
+        return pd.DataFrame(), dict(_EMPTY_STATS)
+    trades, curve = run_backtest(bars, cfg)
+    if curve.empty:
+        return trades, dict(_EMPTY_STATS)
+    return trades, {**_EMPTY_STATS, **summarize(trades, curve)}
+
+
 def compare_risk_profiles(
     bars: pd.DataFrame,
     base_cfg: Config,
@@ -34,15 +61,18 @@ def compare_risk_profiles(
         # scale each realized return proportionally to isolate sizing risk.
         if risk_fraction <= 0.005:
             cfg = replace(base_cfg, risk_fraction=risk_fraction)
-            trades, curve = run_backtest(bars, cfg)
-            stats = summarize(trades, curve)
+            _, stats = _run_or_empty(bars, cfg)
         else:
             baseline_cfg = replace(base_cfg, risk_fraction=0.0025)
-            trades, _ = run_backtest(bars, baseline_cfg)
-            stats = _rescale_trade_path(
-                trades=trades,
-                starting_equity=base_cfg.starting_equity,
-                scale=risk_fraction / 0.0025,
+            trades, baseline_stats = _run_or_empty(bars, baseline_cfg)
+            stats = (
+                _rescale_trade_path(
+                    trades=trades,
+                    starting_equity=base_cfg.starting_equity,
+                    scale=risk_fraction / 0.0025,
+                )
+                if not trades.empty
+                else baseline_stats
             )
 
         rows.append(
@@ -67,15 +97,7 @@ def _rescale_trade_path(
     if scale <= 0:
         raise ValueError("scale must be positive")
     if trades.empty:
-        return {
-            "trades": 0.0,
-            "net_profit": 0.0,
-            "return_pct": 0.0,
-            "win_rate_pct": 0.0,
-            "expectancy_per_trade": 0.0,
-            "profit_factor": 0.0,
-            "max_drawdown_pct": 0.0,
-        }
+        return dict(_EMPTY_STATS)
 
     equity = starting_equity
     peak = starting_equity
@@ -94,12 +116,15 @@ def _rescale_trade_path(
         worst_drawdown = min(worst_drawdown, equity / peak - 1.0)
 
     pnl_series = pd.Series(pnls, dtype=float)
+    if pnl_series.empty:
+        return dict(_EMPTY_STATS)
     wins = pnl_series[pnl_series > 0]
     losses = pnl_series[pnl_series < 0]
     gross_profit = float(wins.sum())
     gross_loss = float(-losses.sum())
 
     return {
+        **_EMPTY_STATS,
         "trades": float(len(pnl_series)),
         "net_profit": float(equity - starting_equity),
         "return_pct": float((equity / starting_equity - 1.0) * 100.0),
