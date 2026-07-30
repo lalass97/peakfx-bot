@@ -1,6 +1,6 @@
 # PeakFX Paper-Trading Telemetry
 
-The demo EA should write append-only CSV events using the following columns:
+The demo EA writes append-only CSV events using these columns:
 
 ```text
 time,event,symbol,magic,ticket,message
@@ -15,7 +15,31 @@ time,event,symbol,magic,ticket,message
 - `ticket`: MT5 order, deal, or position ticket where applicable; otherwise `0`.
 - `message`: short diagnostic text without credentials or account secrets.
 
-## Recommended event types
+## Native MT5 location
+
+By default, the EA writes:
+
+```text
+PeakFX\peakfx_events.csv
+```
+
+inside the MetaTrader **Common Files** directory. In MT5, open it with:
+
+```text
+File → Open Shared Data Folder → Files → PeakFX
+```
+
+The location is shared across terminals on the same Windows user account. It is intentionally outside the Git repository so account activity is not committed accidentally.
+
+For analysis, copy the file into:
+
+```text
+data\paper\peakfx_events.csv
+```
+
+The `data/` directory is ignored by Git.
+
+## Event types written by the EA
 
 - `startup`
 - `shutdown`
@@ -39,6 +63,8 @@ time,event,symbol,magic,ticket,message
 - `position_opened`
 - `position_closed`
 
+The EA records a heartbeat every five minutes by default. The heartbeat includes equity, daily loss, weekly loss, trade count, and whether a PeakFX position is open.
+
 ## Health command
 
 ```powershell
@@ -59,4 +85,4 @@ The command writes `reports/paper_health.json` and exits with:
 - Any symbol other than EURUSD
 - Any nonzero magic number other than 26073001
 
-Telemetry files belong under `data/paper/` and must not be committed to GitHub.
+Never add telemetry files to GitHub. They can expose account activity even though the EA does not log credentials or the account number.
