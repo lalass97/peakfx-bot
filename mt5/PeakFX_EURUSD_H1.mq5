@@ -1,5 +1,5 @@
 #property strict
-#property version   "1.10"
+#property version   "1.20"
 #property description "PeakFX EURUSD H1 trend-following EA - demo first"
 
 #include <Trade/Trade.mqh>
@@ -26,6 +26,10 @@ input int FridayCutoffHour = 16;
 input int CooldownBars = 2;
 input bool DemoOnly = true;
 input long MagicNumber = 26073001;
+input bool EnableTelemetry = true;
+input string TelemetryFolder = "PeakFX";
+input string TelemetryFile = "peakfx_events.csv";
+input int HeartbeatSeconds = 300;
 
 int fastHandle = INVALID_HANDLE;
 int slowHandle = INVALID_HANDLE;
@@ -39,6 +43,57 @@ double dayStartEquity = 0.0;
 double weekStartEquity = 0.0;
 double equityHighWater = 0.0;
 int tradesToday = 0;
+
+string TelemetryPath()
+{
+   return TelemetryFolder + "\\" + TelemetryFile;
+}
+
+string UtcTimestamp()
+{
+   MqlDateTime value;
+   TimeToStruct(TimeGMT(), value);
+   return StringFormat("%04d-%02d-%02dT%02d:%02d:%02dZ",
+                       value.year, value.mon, value.day,
+                       value.hour, value.min, value.sec);
+}
+
+string CleanTelemetryMessage(string message)
+{
+   StringReplace(message, "\r", " ");
+   StringReplace(message, "\n", " ");
+   return message;
+}
+
+void LogEvent(const string eventName, const ulong ticket = 0, const string message = "")
+{
+   if(!EnableTelemetry) return;
+
+   FolderCreate(TelemetryFolder, FILE_COMMON);
+   int handle = FileOpen(TelemetryPath(),
+                         FILE_READ | FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_COMMON | FILE_SHARE_READ,
+                         ',');
+   if(handle == INVALID_HANDLE)
+   {
+      Print("Telemetry open failed. Error=", GetLastError());
+      ResetLastError();
+      return;
+   }
+
+   if(FileSize(handle) == 0)
+      FileWrite(handle, "time", "event", "symbol", "magic", "ticket", "message");
+
+   FileSeek(handle, 0, SEEK_END);
+   FileWrite(handle,
+             UtcTimestamp(),
+             eventName,
+             InpSymbol,
+             (string)MagicNumber,
+             (string)ticket,
+             CleanTelemetryMessage(message));
+   FileFlush(handle);
+   FileClose(handle);
+}
 
 string StateKey(const string suffix)
 {
@@ -167,9 +222,29 @@ double LossPercent(const double anchor)
 
 bool PortfolioRiskAllowsTrading()
 {
-   if(LossPercent(dayStartEquity) >= MaxDailyLossPercent) { Print("Blocked: daily loss limit reached."); return false; }
-   if(LossPercent(weekStartEquity) >= MaxWeeklyLossPercent) { Print("Blocked: weekly loss limit reached."); return false; }
-   if(LossPercent(equityHighWater) >= MaxHighWaterDrawdownPercent) { Print("Blocked: equity drawdown circuit breaker reached."); return false; }
+   double dailyLoss = LossPercent(dayStartEquity);
+   if(dailyLoss >= MaxDailyLossPercent)
+   {
+      LogEvent("daily_lock", 0, StringFormat("daily_loss_pct=%.3f", dailyLoss));
+      Print("Blocked: daily loss limit reached.");
+      return false;
+   }
+
+   double weeklyLoss = LossPercent(weekStartEquity);
+   if(weeklyLoss >= MaxWeeklyLossPercent)
+   {
+      LogEvent("weekly_lock", 0, StringFormat("weekly_loss_pct=%.3f", weeklyLoss));
+      Print("Blocked: weekly loss limit reached.");
+      return false;
+   }
+
+   double highWaterLoss = LossPercent(equityHighWater);
+   if(highWaterLoss >= MaxHighWaterDrawdownPercent)
+   {
+      LogEvent("drawdown_lock", 0, StringFormat("drawdown_pct=%.3f", highWaterLoss));
+      Print("Blocked: equity drawdown circuit breaker reached.");
+      return false;
+   }
    return true;
 }
 
@@ -184,13 +259,13 @@ bool HasOpenPosition()
    return false;
 }
 
-bool SpreadAcceptable()
+double CurrentSpreadPoints()
 {
    MqlTick tick;
-   if(!SymbolInfoTick(InpSymbol, tick)) return false;
+   if(!SymbolInfoTick(InpSymbol, tick)) return -1.0;
    double point = SymbolInfoDouble(InpSymbol, SYMBOL_POINT);
-   if(point <= 0.0) return false;
-   return (tick.ask - tick.bid) / point <= MaxSpreadPoints;
+   if(point <= 0.0) return -1.0;
+   return (tick.ask - tick.bid) / point;
 }
 
 bool CooldownComplete()
@@ -255,71 +330,173 @@ bool MarginAvailable(const ENUM_ORDER_TYPE type, const double volume, const doub
 void EvaluateSignal()
 {
    RefreshRiskState();
-   if(DemoOnly && !IsDemoAccount()) { Print("Blocked: DemoOnly is enabled."); return; }
-   if(!TradingWindowOpen() || !PortfolioRiskAllowsTrading()) return;
-   if(tradesToday >= MaxTradesPerDay || HasOpenPosition() || !SpreadAcceptable() || !CooldownComplete()) return;
+
+   if(DemoOnly && !IsDemoAccount())
+   {
+      LogEvent("risk_block", 0, "DemoOnly enabled on non-demo account");
+      Print("Blocked: DemoOnly is enabled.");
+      return;
+   }
+
+   if(!TradingWindowOpen())
+   {
+      LogEvent("session_block", 0, "outside configured trading window");
+      return;
+   }
+
+   if(!PortfolioRiskAllowsTrading()) return;
+
+   if(tradesToday >= MaxTradesPerDay)
+   {
+      LogEvent("risk_block", 0, "maximum daily trade count reached");
+      return;
+   }
+   if(HasOpenPosition())
+   {
+      LogEvent("risk_block", 0, "PeakFX position already open");
+      return;
+   }
+
+   double spreadPoints = CurrentSpreadPoints();
+   if(spreadPoints < 0.0 || spreadPoints > MaxSpreadPoints)
+   {
+      LogEvent("spread_block", 0, StringFormat("spread_points=%.1f", spreadPoints));
+      return;
+   }
+
+   if(!CooldownComplete())
+   {
+      LogEvent("cooldown_block", 0, "cooldown bars not complete");
+      return;
+   }
 
    double fast1, fast2, slow1, slow2, trend1, trend6, atr1, close1;
-   if(!ReadIndicators(fast1, fast2, slow1, slow2, trend1, trend6, atr1, close1)) return;
+   if(!ReadIndicators(fast1, fast2, slow1, slow2, trend1, trend6, atr1, close1))
+   {
+      LogEvent("risk_block", 0, "indicator data unavailable");
+      return;
+   }
+
    bool longSignal = fast2 <= slow2 && fast1 > slow1 && close1 > trend1 && trend1 > trend6;
    bool shortSignal = fast2 >= slow2 && fast1 < slow1 && close1 < trend1 && trend1 < trend6;
-   if(!longSignal && !shortSignal) return;
+   if(!longSignal && !shortSignal)
+   {
+      LogEvent("no_signal", 0, "closed H1 candle produced no qualifying crossover");
+      return;
+   }
+
+   LogEvent(longSignal ? "signal_long" : "signal_short", 0,
+            StringFormat("atr=%.5f spread_points=%.1f", atr1, spreadPoints));
 
    MqlTick tick;
-   if(!SymbolInfoTick(InpSymbol, tick)) return;
+   if(!SymbolInfoTick(InpSymbol, tick))
+   {
+      LogEvent("order_rejected", 0, "symbol tick unavailable");
+      return;
+   }
+
    double stopDistance = atr1 * ATRStopMultiplier;
    double volume = CalculateVolume(stopDistance);
-   if(volume <= 0.0) { Print("Blocked: calculated volume is below broker minimum or invalid."); return; }
+   if(volume <= 0.0)
+   {
+      LogEvent("volume_block", 0, "calculated volume below broker minimum or invalid");
+      Print("Blocked: calculated volume is below broker minimum or invalid.");
+      return;
+   }
 
    trade.SetExpertMagicNumber(MagicNumber);
    trade.SetDeviationInPoints(MaxDeviationPoints);
    trade.SetTypeFillingBySymbol(InpSymbol);
    int digits = (int)SymbolInfoInteger(InpSymbol, SYMBOL_DIGITS);
    bool placed = false;
+   double sl = 0.0;
+   double tp = 0.0;
+   ENUM_ORDER_TYPE orderType = longSignal ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+   double entry = longSignal ? tick.ask : tick.bid;
 
    if(longSignal)
    {
-      double sl = NormalizeDouble(tick.ask - stopDistance, digits);
-      double tp = NormalizeDouble(tick.ask + stopDistance * RewardRisk, digits);
-      if(StopsValid(tick.ask, sl, tp) && MarginAvailable(ORDER_TYPE_BUY, volume, tick.ask))
-         placed = trade.Buy(volume, InpSymbol, 0.0, sl, tp, "PeakFX EURUSD H1 long");
+      sl = NormalizeDouble(tick.ask - stopDistance, digits);
+      tp = NormalizeDouble(tick.ask + stopDistance * RewardRisk, digits);
    }
    else
    {
-      double sl = NormalizeDouble(tick.bid + stopDistance, digits);
-      double tp = NormalizeDouble(tick.bid - stopDistance * RewardRisk, digits);
-      if(StopsValid(tick.bid, sl, tp) && MarginAvailable(ORDER_TYPE_SELL, volume, tick.bid))
-         placed = trade.Sell(volume, InpSymbol, 0.0, sl, tp, "PeakFX EURUSD H1 short");
+      sl = NormalizeDouble(tick.bid + stopDistance, digits);
+      tp = NormalizeDouble(tick.bid - stopDistance * RewardRisk, digits);
    }
+
+   if(!StopsValid(entry, sl, tp))
+   {
+      LogEvent("order_rejected", 0, "SL or TP violates broker minimum stop distance");
+      return;
+   }
+
+   if(!MarginAvailable(orderType, volume, entry))
+   {
+      LogEvent("margin_block", 0, StringFormat("volume=%.2f", volume));
+      return;
+   }
+
+   LogEvent("order_submitted", 0,
+            StringFormat("side=%s volume=%.2f sl=%.5f tp=%.5f",
+                         longSignal ? "buy" : "sell", volume, sl, tp));
+
+   if(longSignal)
+      placed = trade.Buy(volume, InpSymbol, 0.0, sl, tp, "PeakFX EURUSD H1 long");
+   else
+      placed = trade.Sell(volume, InpSymbol, 0.0, sl, tp, "PeakFX EURUSD H1 short");
 
    if(placed)
    {
       tradesToday = CountTodayTrades();
       lastTradeBar = iTime(InpSymbol, InpTimeframe, 0);
       SaveState();
+      LogEvent("order_filled", trade.ResultDeal(),
+               StringFormat("order=%I64u volume=%.2f result=%s",
+                            trade.ResultOrder(), volume, trade.ResultRetcodeDescription()));
       Print("Trade placed. Volume=", volume, " Result=", trade.ResultRetcodeDescription());
    }
-   else Print("Trade rejected: ", trade.ResultRetcode(), " ", trade.ResultRetcodeDescription());
+   else
+   {
+      LogEvent("order_rejected", trade.ResultOrder(),
+               StringFormat("retcode=%u description=%s",
+                            trade.ResultRetcode(), trade.ResultRetcodeDescription()));
+      Print("Trade rejected: ", trade.ResultRetcode(), " ", trade.ResultRetcodeDescription());
+   }
 }
 
 int OnInit()
 {
-   if(InpSymbol != "EURUSD" || InpTimeframe != PERIOD_H1) { Print("This version is locked to EURUSD H1."); return INIT_PARAMETERS_INCORRECT; }
+   if(InpSymbol != "EURUSD" || InpTimeframe != PERIOD_H1)
+   {
+      Print("This version is locked to EURUSD H1.");
+      return INIT_PARAMETERS_INCORRECT;
+   }
    if(RiskPercent <= 0.0 || RiskPercent > 0.5 || RewardRisk < 1.0) return INIT_PARAMETERS_INCORRECT;
+   if(HeartbeatSeconds < 60) return INIT_PARAMETERS_INCORRECT;
    if(!SymbolSelect(InpSymbol, true)) return INIT_FAILED;
+
    fastHandle = iMA(InpSymbol, InpTimeframe, FastEMA, 0, MODE_EMA, PRICE_CLOSE);
    slowHandle = iMA(InpSymbol, InpTimeframe, SlowEMA, 0, MODE_EMA, PRICE_CLOSE);
    trendHandle = iMA(InpSymbol, InpTimeframe, TrendEMA, 0, MODE_EMA, PRICE_CLOSE);
    atrHandle = iATR(InpSymbol, InpTimeframe, ATRPeriod);
-   if(fastHandle == INVALID_HANDLE || slowHandle == INVALID_HANDLE || trendHandle == INVALID_HANDLE || atrHandle == INVALID_HANDLE) return INIT_FAILED;
+   if(fastHandle == INVALID_HANDLE || slowHandle == INVALID_HANDLE || trendHandle == INVALID_HANDLE || atrHandle == INVALID_HANDLE)
+      return INIT_FAILED;
+
    RestoreState();
    lastBarTime = iTime(InpSymbol, InpTimeframe, 0);
+   EventSetTimer(HeartbeatSeconds);
+   LogEvent("startup", 0,
+            StringFormat("version=1.20 demo_only=%s trades_today=%d equity=%.2f",
+                         DemoOnly ? "true" : "false", tradesToday, AccountInfoDouble(ACCOUNT_EQUITY)));
    Print("PeakFX EURUSD H1 initialized. DemoOnly=", DemoOnly, " TradesToday=", tradesToday);
    return INIT_SUCCEEDED;
 }
 
 void OnDeinit(const int reason)
 {
+   LogEvent("shutdown", 0, StringFormat("reason=%d", reason));
+   EventKillTimer();
    SaveState();
    if(fastHandle != INVALID_HANDLE) IndicatorRelease(fastHandle);
    if(slowHandle != INVALID_HANDLE) IndicatorRelease(slowHandle);
@@ -327,9 +504,50 @@ void OnDeinit(const int reason)
    if(atrHandle != INVALID_HANDLE) IndicatorRelease(atrHandle);
 }
 
+void OnTimer()
+{
+   RefreshRiskState();
+   LogEvent("heartbeat", 0,
+            StringFormat("equity=%.2f daily_loss_pct=%.3f weekly_loss_pct=%.3f trades_today=%d open_position=%s",
+                         AccountInfoDouble(ACCOUNT_EQUITY),
+                         LossPercent(dayStartEquity),
+                         LossPercent(weekStartEquity),
+                         tradesToday,
+                         HasOpenPosition() ? "true" : "false"));
+}
+
+void OnTradeTransaction(const MqlTradeTransaction &trans,
+                        const MqlTradeRequest &request,
+                        const MqlTradeResult &result)
+{
+   if(trans.type != TRADE_TRANSACTION_DEAL_ADD || trans.deal == 0) return;
+   if(!HistoryDealSelect(trans.deal)) return;
+   if(HistoryDealGetString(trans.deal, DEAL_SYMBOL) != InpSymbol) return;
+   if((long)HistoryDealGetInteger(trans.deal, DEAL_MAGIC) != MagicNumber) return;
+
+   ENUM_DEAL_ENTRY entryType = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(trans.deal, DEAL_ENTRY);
+   double price = HistoryDealGetDouble(trans.deal, DEAL_PRICE);
+   double volume = HistoryDealGetDouble(trans.deal, DEAL_VOLUME);
+   double profit = HistoryDealGetDouble(trans.deal, DEAL_PROFIT)
+                 + HistoryDealGetDouble(trans.deal, DEAL_SWAP)
+                 + HistoryDealGetDouble(trans.deal, DEAL_COMMISSION);
+
+   if(entryType == DEAL_ENTRY_IN || entryType == DEAL_ENTRY_INOUT)
+      LogEvent("position_opened", trans.deal,
+               StringFormat("price=%.5f volume=%.2f", price, volume));
+
+   if(entryType == DEAL_ENTRY_OUT || entryType == DEAL_ENTRY_OUT_BY || entryType == DEAL_ENTRY_INOUT)
+      LogEvent("position_closed", trans.deal,
+               StringFormat("price=%.5f volume=%.2f net_profit=%.2f", price, volume, profit));
+}
+
 void OnTick()
 {
    if(_Symbol != InpSymbol) return;
    RefreshRiskState();
-   if(IsNewBar()) EvaluateSignal();
+   if(IsNewBar())
+   {
+      LogEvent("new_bar", 0, TimeToString(lastBarTime, TIME_DATE | TIME_MINUTES));
+      EvaluateSignal();
+   }
 }
