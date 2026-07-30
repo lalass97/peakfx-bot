@@ -20,6 +20,20 @@ class Config:
     slippage_pips: float = 0.2
     starting_equity: float = 10_000.0
 
+    def validate(self) -> None:
+        if not 0 < self.fast_ema < self.slow_ema < self.trend_ema:
+            raise ValueError("EMA periods must satisfy fast < slow < trend")
+        if self.atr_period < 2:
+            raise ValueError("ATR period must be at least 2")
+        if self.atr_stop_multiplier <= 0 or self.reward_risk <= 0:
+            raise ValueError("Stop multiplier and reward/risk must be positive")
+        if not 0 < self.risk_fraction <= 0.005:
+            raise ValueError("Risk fraction must be greater than 0 and no more than 0.005")
+        if self.spread_pips < 0 or self.slippage_pips < 0:
+            raise ValueError("Trading costs cannot be negative")
+        if self.starting_equity <= 0:
+            raise ValueError("Starting equity must be positive")
+
 
 def load_bars(path: str | Path) -> pd.DataFrame:
     df = pd.read_csv(path)
@@ -34,6 +48,7 @@ def load_bars(path: str | Path) -> pd.DataFrame:
 
 
 def add_indicators(df: pd.DataFrame, cfg: Config) -> pd.DataFrame:
+    cfg.validate()
     out = df.copy()
     out["ema_fast"] = out["close"].ewm(span=cfg.fast_ema, adjust=False).mean()
     out["ema_slow"] = out["close"].ewm(span=cfg.slow_ema, adjust=False).mean()
@@ -66,6 +81,7 @@ def create_signals(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def run_backtest(df: pd.DataFrame, cfg: Config) -> tuple[pd.DataFrame, pd.DataFrame]:
+    cfg.validate()
     data = create_signals(add_indicators(df, cfg)).dropna().copy()
     pip = 0.0001
     entry_cost = (cfg.spread_pips + cfg.slippage_pips) * pip
@@ -77,7 +93,6 @@ def run_backtest(df: pd.DataFrame, cfg: Config) -> tuple[pd.DataFrame, pd.DataFr
     for i in range(1, len(data)):
         ts = data.index[i]
         row = data.iloc[i]
-        # Signals are generated from the just-closed candle and entered at the next bar open.
         prior = data.iloc[i - 1]
 
         if position is not None:
@@ -126,6 +141,19 @@ def run_backtest(df: pd.DataFrame, cfg: Config) -> tuple[pd.DataFrame, pd.DataFr
     return pd.DataFrame(trades), pd.DataFrame(equity_curve).set_index("time")
 
 
+def _max_consecutive_losses(trades: pd.DataFrame) -> int:
+    if trades.empty:
+        return 0
+    longest = current = 0
+    for pnl in trades["pnl"]:
+        if pnl < 0:
+            current += 1
+            longest = max(longest, current)
+        else:
+            current = 0
+    return longest
+
+
 def summarize(trades: pd.DataFrame, curve: pd.DataFrame) -> dict[str, float]:
     if curve.empty:
         return {"trades": 0.0}
@@ -134,14 +162,22 @@ def summarize(trades: pd.DataFrame, curve: pd.DataFrame) -> dict[str, float]:
     drawdown = curve["equity"] / rolling_max - 1
     wins = trades.loc[trades["pnl"] > 0, "pnl"] if not trades.empty else pd.Series(dtype=float)
     losses = trades.loc[trades["pnl"] < 0, "pnl"] if not trades.empty else pd.Series(dtype=float)
-    gross_profit = wins.sum()
-    gross_loss = -losses.sum()
+    gross_profit = float(wins.sum())
+    gross_loss = float(-losses.sum())
+    average_win = float(wins.mean()) if not wins.empty else 0.0
+    average_loss = float(-losses.mean()) if not losses.empty else 0.0
+    expectancy = float(trades["pnl"].mean()) if not trades.empty else 0.0
     return {
         "trades": float(len(trades)),
         "net_profit": float(curve["equity"].iloc[-1] - curve["equity"].iloc[0]),
         "return_pct": float((curve["equity"].iloc[-1] / curve["equity"].iloc[0] - 1) * 100),
         "win_rate_pct": float((trades["pnl"] > 0).mean() * 100) if len(trades) else 0.0,
+        "average_win": average_win,
+        "average_loss": average_loss,
+        "payoff_ratio": float(average_win / average_loss) if average_loss > 0 else np.inf,
+        "expectancy_per_trade": expectancy,
         "profit_factor": float(gross_profit / gross_loss) if gross_loss > 0 else np.inf,
+        "max_consecutive_losses": float(_max_consecutive_losses(trades)),
         "max_drawdown_pct": float(drawdown.min() * 100),
         "volatility_pct": float(returns.std() * np.sqrt(24 * 252) * 100),
     }
