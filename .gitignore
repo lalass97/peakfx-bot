@@ -1,0 +1,19 @@
+# Private broker exports and generated reports
+data/private/
+reports/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# MetaTrader build artifacts
+*.ex5
+*.log
