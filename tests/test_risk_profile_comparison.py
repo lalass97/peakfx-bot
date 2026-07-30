@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 from research.backtest_eurusd_h1 import Config
@@ -23,7 +24,7 @@ def test_rescaled_aggressive_path_magnifies_profit_and_drawdown() -> None:
 
 def test_comparison_keeps_three_declared_profiles() -> None:
     index = pd.date_range("2024-01-01", periods=500, freq="h", tz="UTC")
-    close = pd.Series(1.10 + (pd.Series(range(500)) * 0.00002), index=index)
+    close = pd.Series(1.10 + np.arange(500) * 0.00002, index=index)
     bars = pd.DataFrame(
         {
             "open": close.shift(1).fillna(close.iloc[0]),
