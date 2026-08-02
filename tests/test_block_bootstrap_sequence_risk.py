@@ -64,13 +64,21 @@ def test_block_bootstrap_can_change_terminal_equity():
     "trades,config,message",
     [
         (np.array([1.0]), BlockBootstrapConfig(), "at least two"),
-        (np.array([1.0, np.nan]), BlockBootstrapConfig(), "finite"),
-        (np.array([1.0, 2.0]), BlockBootstrapConfig(simulations=0), "simulations"),
-        (np.array([1.0, 2.0]), BlockBootstrapConfig(block_size=3), "block_size"),
-        (np.array([1.0, 2.0]), BlockBootstrapConfig(initial_balance=0), "initial_balance"),
+        (np.array([1.0, np.nan]), BlockBootstrapConfig(block_size=2), "finite"),
         (
             np.array([1.0, 2.0]),
-            BlockBootstrapConfig(ruin_drawdown_fraction=0),
+            BlockBootstrapConfig(simulations=0, block_size=2),
+            "simulations",
+        ),
+        (np.array([1.0, 2.0]), BlockBootstrapConfig(block_size=3), "block_size"),
+        (
+            np.array([1.0, 2.0]),
+            BlockBootstrapConfig(block_size=2, initial_balance=0),
+            "initial_balance",
+        ),
+        (
+            np.array([1.0, 2.0]),
+            BlockBootstrapConfig(block_size=2, ruin_drawdown_fraction=0),
             "ruin_drawdown_fraction",
         ),
     ],
