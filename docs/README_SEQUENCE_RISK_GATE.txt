@@ -1,0 +1,1 @@
+Sequence-risk qualification requires a complete predeclared block-size sweep. Any measured threshold breach is red. Insufficient sweep evidence is inconclusive. This branch contains no strategy changes, historical dataset, optimization, live trading, or profitability claim.
