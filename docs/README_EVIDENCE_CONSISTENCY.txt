@@ -1,0 +1,1 @@
+Use research.evidence_consistency.verify_evidence_consistency before final qualification. It validates both exports and rejects incomplete open-equity coverage. It does not sort, repair, or modify evidence.
