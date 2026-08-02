@@ -88,7 +88,23 @@ def test_newer_pullback_replaces_pending_setup_and_resets_age() -> None:
     assert result.setup.bar_index == 0
 
 
-def test_setup_expires_on_fifth_aged_bar() -> None:
+def test_setup_expires_on_fifth_aged_bar_when_no_higher_priority_event_occurs() -> None:
+    setup = PullbackSetup(
+        state=SetupState.SHORT_PENDING,
+        pullback_high=1.1150,
+        pullback_low=1.1000,
+        pullback_time=1,
+        bar_index=4,
+    )
+    result = advance(
+        setup,
+        bar(time=2, high=1.1060, low=1.1010, close=1.1030, fast=1.1000, slow=1.1040, trend=1.1080),
+    )
+    assert result.event == "setup_expired"
+    assert result.setup.state is SetupState.NONE
+
+
+def test_trigger_still_has_priority_on_the_bar_that_would_otherwise_expire() -> None:
     setup = PullbackSetup(
         state=SetupState.SHORT_PENDING,
         pullback_high=1.1150,
@@ -100,7 +116,7 @@ def test_setup_expires_on_fifth_aged_bar() -> None:
         setup,
         bar(time=2, high=1.1030, low=1.1010, close=1.1020, fast=1.1000, slow=1.1040, trend=1.1080),
     )
-    assert result.event == "setup_expired"
+    assert result.event == "trigger_fired"
     assert result.setup.state is SetupState.NONE
 
 
