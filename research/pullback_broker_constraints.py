@@ -23,6 +23,10 @@ def validate_stop_distances(
     When the broker reports no minimum stop level, the plan is accepted.
     Otherwise both stop-loss and take-profit distances must be at least the
     broker minimum. Invalid broker metadata fails closed.
+
+    A very small tolerance tied to the symbol point prevents binary floating-
+    point representation from rejecting a distance that is exactly equal to
+    the broker minimum.
     """
     if entry <= 0 or stop <= 0 or target <= 0:
         return BrokerConstraintResult(False, "invalid_price", 0.0)
@@ -33,9 +37,10 @@ def validate_stop_distances(
     if minimum_distance <= 0:
         return BrokerConstraintResult(True, "accepted", minimum_distance)
 
-    if abs(entry - stop) < minimum_distance:
+    tolerance = max(abs(point) * 1e-9, 1e-15)
+    if abs(entry - stop) + tolerance < minimum_distance:
         return BrokerConstraintResult(False, "stop_too_close", minimum_distance)
-    if abs(entry - target) < minimum_distance:
+    if abs(entry - target) + tolerance < minimum_distance:
         return BrokerConstraintResult(False, "target_too_close", minimum_distance)
 
     return BrokerConstraintResult(True, "accepted", minimum_distance)
