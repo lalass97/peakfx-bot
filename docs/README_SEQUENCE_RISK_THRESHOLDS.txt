@@ -1,0 +1,1 @@
+Default research thresholds: P95 drawdown <= 20%, P99 drawdown <= 30%, P95/historical ratio <= 1.50x, ruin probability <= 5%, P05 terminal equity >= 80% of initial balance, and at least four block sizes. Equality passes.
