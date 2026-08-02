@@ -35,6 +35,8 @@ def build_trade_plan(
     lot_step: float,
     stops_level_points: int,
     point: float,
+    spread_points: int,
+    max_spread_points: int,
     required_margin_per_lot: float,
     free_margin: float,
     atr_stop_multiplier: float = 1.5,
@@ -46,6 +48,11 @@ def build_trade_plan(
     This remains a research model. It does not send orders, simulate slippage,
     or claim that a technically valid plan is profitable.
     """
+    if spread_points < 0 or max_spread_points < 0:
+        return TradePlanResult(False, "invalid_spread_data")
+    if spread_points > max_spread_points:
+        return TradePlanResult(False, "spread_block")
+
     try:
         execution = build_execution_plan(
             side=side,
