@@ -70,6 +70,54 @@ function Resolve-Mt5DataFolder {
     return $fallback.FullName
 }
 
+function Convert-LeverageToInteger([string]$Value) {
+    return [int]($Value.Split(':')[1])
+}
+
+function Stop-StaleMt5Processes {
+    Get-Process terminal64, metatester64 -ErrorAction SilentlyContinue |
+        Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
+}
+
+function Find-Mt5Report {
+    param(
+        [Parameter(Mandatory = $true)][string]$ReportStem,
+        [Parameter(Mandatory = $true)][datetime]$StartedAt,
+        [Parameter(Mandatory = $true)][string]$StageDirectory
+    )
+
+    $extensions = @('.htm', '.html', '.xml')
+    $searchRoots = @(
+        $StageDirectory,
+        $Mt5DataFolder,
+        $MetaTraderRoot,
+        (Join-Path $env:APPDATA 'MetaQuotes\Terminal\Common')
+    ) | Where-Object { $_ -and (Test-Path $_ -PathType Container) } | Select-Object -Unique
+
+    $candidates = @()
+    foreach ($root in $searchRoots) {
+        foreach ($extension in $extensions) {
+            $exact = Join-Path $root "$ReportStem$extension"
+            if (Test-Path $exact -PathType Leaf) {
+                $item = Get-Item $exact
+                if ($item.LastWriteTime -ge $StartedAt.AddMinutes(-1)) { $candidates += $item }
+            }
+        }
+
+        $candidates += Get-ChildItem $root -File -Recurse -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.BaseName -eq $ReportStem -and
+                $extensions -contains $_.Extension.ToLowerInvariant() -and
+                $_.LastWriteTime -ge $StartedAt.AddMinutes(-1)
+            }
+    }
+
+    return $candidates |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1
+}
+
 New-Item -ItemType Directory -Force -Path $GeneratedDir | Out-Null
 Write-Host "Generating exact EXP2 candidate from compiled-clean EXP1 source..."
 & python $Builder $CompiledCleanExp1Source $CandidateSource
@@ -123,14 +171,10 @@ if ($RunOos) {
     $Stages += @{ Name = "oos_6m"; From = "2025.07.01"; To = "2025.12.31" }
 }
 
-function Convert-LeverageToInteger([string]$Value) {
-    return [int]($Value.Split(':')[1])
-}
-
 function New-TesterConfig($Stage) {
     $stageDir = Join-Path $ResultsRoot $Stage.Name
     New-Item -ItemType Directory -Force -Path $stageDir | Out-Null
-    $reportBase = Join-Path $stageDir "$($Stage.Name)_report"
+    $reportStem = "$($Stage.Name)_report"
     $configPath = Join-Path $stageDir "$($Stage.Name).ini"
     $leverageInt = Convert-LeverageToInteger $Leverage
     $expertPath = "$ExpertSubdir\$CandidateName"
@@ -149,35 +193,37 @@ ForwardMode=0
 Deposit=$Deposit
 Currency=USD
 Leverage=$leverageInt
-Report=$reportBase
+Report=$reportStem
 ReplaceReport=1
 ShutdownTerminal=1
 Visual=0
 "@
     Set-Content -Path $configPath -Value $config -Encoding ASCII
-    return @{ Config = $configPath; ReportBase = $reportBase; Directory = $stageDir }
+    return @{ Config = $configPath; ReportStem = $reportStem; Directory = $stageDir }
 }
 
 foreach ($stage in $Stages) {
     $paths = New-TesterConfig $stage
+    Stop-StaleMt5Processes
+    $startedAt = Get-Date
     Write-Host "Running MT5 stage $($stage.Name): $($stage.From) to $($stage.To)..."
-    $terminalProcess = Start-Process -FilePath $Terminal -ArgumentList @(
+    $terminalProcess = Start-Process -FilePath $Terminal -WorkingDirectory $MetaTraderRoot -ArgumentList @(
         "/config:$($paths.Config)"
     ) -Wait -PassThru
 
-    $reportCandidates = @(
-        "$($paths.ReportBase).htm",
-        "$($paths.ReportBase).html",
-        "$($paths.ReportBase).xml"
-    )
-    $reportPath = $reportCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-    if (-not $reportPath) {
+    $foundReport = Find-Mt5Report -ReportStem $paths.ReportStem -StartedAt $startedAt -StageDirectory $paths.Directory
+    if (-not $foundReport) {
         $journalDir = Join-Path $Mt5DataFolder "logs"
         $latestJournal = Get-ChildItem $journalDir -File -ErrorAction SilentlyContinue |
             Sort-Object LastWriteTime -Descending |
             Select-Object -First 1
         $journalHint = if ($latestJournal) { $latestJournal.FullName } else { "none found" }
-        throw "No MT5 report found for $($stage.Name) under $($paths.Directory). Terminal exit code: $($terminalProcess.ExitCode). Latest terminal journal: $journalHint"
+        throw "No MT5 report found for $($stage.Name). Searched stage directory, MT5 data folder, install folder, and Terminal Common. Terminal exit code: $($terminalProcess.ExitCode). Latest terminal journal: $journalHint"
+    }
+
+    $reportPath = Join-Path $paths.Directory $foundReport.Name
+    if ($foundReport.FullName -ine $reportPath) {
+        Copy-Item -LiteralPath $foundReport.FullName -Destination $reportPath -Force
     }
     if ($terminalProcess.ExitCode -ne 0) {
         Write-Warning "MT5 returned exit code $($terminalProcess.ExitCode), but a tester report was produced: $reportPath"
@@ -199,6 +245,7 @@ foreach ($stage in $Stages) {
         deployed_source_path = $DeployedSource
         deployed_binary_path = $DeployedBinary
         mt5_data_folder = $Mt5DataFolder
+        original_report_path = $foundReport.FullName
         report_path = $reportPath
     }
     $metadataPath = Join-Path $paths.Directory "$($stage.Name)_run_metadata.json"
