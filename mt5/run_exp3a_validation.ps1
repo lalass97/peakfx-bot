@@ -34,14 +34,9 @@ Write-Host "Generating isolated EXP3A ER candidate from EXP2 parent..."
 & python $Exp3Builder $Exp2Source $CandidateSource
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path $CandidateSource)) { throw "EXP3A candidate generation failed" }
 
-# Deploy into the active writable MT5 data folder, exactly like the successful EXP2 run.
-# MT5_ROOT points to Program Files and is not writable by the runner.
-$ActiveExpertsRoot = Split-Path -Parent $CompiledCleanExp1Source
-if ((Split-Path -Leaf $ActiveExpertsRoot) -eq "PeakFX") {
-    $ActiveExpertsRoot = Split-Path -Parent $ActiveExpertsRoot
-}
-$ExpertsDir = Join-Path $ActiveExpertsRoot "PeakFX"
-New-Item -ItemType Directory -Force -Path $ExpertsDir | Out-Null
+# Deploy beside the verified source inside the active, writable MetaQuotes data folder.
+$ExpertsDir = Split-Path -Parent $CompiledCleanExp1Source
+if (-not (Test-Path $ExpertsDir)) { throw "Active MT5 Experts folder not found: $ExpertsDir" }
 $DeployedSource = Join-Path $ExpertsDir "$CandidateName.mq5"
 Copy-Item $CandidateSource $DeployedSource -Force
 Write-Host "Deployed EXP3A source to active MT5 data folder: $DeployedSource"
@@ -53,7 +48,13 @@ Write-Host "Compiling deployed EXP3A expert..."
 $compileProcess = Start-Process -FilePath $MetaEditor -ArgumentList @("/compile:$DeployedSource","/log:$CompileLog") -Wait -PassThru
 if (-not (Test-Path $CompileLog)) { throw "MetaEditor compile log was not created" }
 $compileText = Get-Content $CompileLog -Raw
-if ($compileText -notmatch '0 error\(s\), 0 warning\(s\)') {
+
+# MetaEditor reports success as: Result: 0 errors, 0 warnings, ...
+$compilePassed = $compileText -match '(?im)^Result:\s*0\s+errors,\s*0\s+warnings,'
+if (-not $compilePassed) {
+    Write-Host "----- MetaEditor compile log -----"
+    Get-Content $CompileLog | ForEach-Object { Write-Host $_ }
+    Write-Host "----- End compile log -----"
     throw "Compile gate failed. Required: 0 errors, 0 warnings. See $CompileLog"
 }
 Write-Host "Compile gate passed (MetaEditor exit code $($compileProcess.ExitCode)); log proves 0 errors, 0 warnings."
@@ -100,7 +101,7 @@ Visual=0
         stage=$stage.Name; symbol="EURUSD"; timeframe="H1"; modeling="every_tick_based_on_real_ticks"
         start_date=$stage.From.Replace('.','-'); end_date=$stage.To.Replace('.','-')
         deposit=$Deposit; currency="USD"; leverage=$Leverage; demo_only=$true
-        source_path=$CandidateSource; deployed_source_path=$DeployedSource; report_path=$reportPath
+        source_path=$CandidateSource; report_path=$reportPath
     } | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $stageDir "$($stage.Name)_run_metadata.json") -Encoding UTF8
     Write-Host "Stage complete: $reportPath"
 }
