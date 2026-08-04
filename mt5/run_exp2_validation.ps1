@@ -5,7 +5,10 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$RepoRoot,
 
-    [string]$TerminalDataPath,
+    [Parameter(Mandatory = $true)]
+    [string]$CompiledCleanExp1Source,
+
+    [switch]$RunOos,
     [double]$Deposit = 10000.0,
     [string]$Leverage = "1:100"
 )
@@ -16,29 +19,33 @@ Set-StrictMode -Version Latest
 $CandidateName = "PeakFX_EURUSD_H1_PULLBACK_CONFIRMED_BREAKOUT_EXP2"
 $CandidateFile = "$CandidateName.mq5"
 $CandidateId = "peakfx_confirmed_breakout_exp2_v1_45"
-$BranchSource = Join-Path $RepoRoot "mt5/$CandidateFile"
 $ResultsRoot = Join-Path $RepoRoot "artifacts/mt5-exp2"
+$GeneratedDir = Join-Path $ResultsRoot "generated"
+$CandidateSource = Join-Path $GeneratedDir $CandidateFile
+$Builder = Join-Path $RepoRoot "research/build_confirmed_breakout_exp2_candidate.py"
 $MetaEditor = Join-Path $MetaTraderRoot "metaeditor64.exe"
 $Terminal = Join-Path $MetaTraderRoot "terminal64.exe"
 
-if (-not (Test-Path $MetaEditor)) { throw "metaeditor64.exe not found: $MetaEditor" }
-if (-not (Test-Path $Terminal)) { throw "terminal64.exe not found: $Terminal" }
-if (-not (Test-Path $BranchSource)) { throw "Candidate source not found: $BranchSource" }
+foreach ($required in @($MetaEditor, $Terminal, $CompiledCleanExp1Source, $Builder)) {
+    if (-not (Test-Path $required)) { throw "Required path not found: $required" }
+}
 if ($Deposit -le 0) { throw "Deposit must be positive" }
 if ($Leverage -notmatch '^1:\d+$') { throw "Leverage must look like 1:100" }
 
-if ([string]::IsNullOrWhiteSpace($TerminalDataPath)) {
-    $TerminalDataPath = Join-Path $env:APPDATA "MetaQuotes/Terminal"
+New-Item -ItemType Directory -Force -Path $GeneratedDir | Out-Null
+Write-Host "Generating exact EXP2 candidate from compiled-clean EXP1 source..."
+& python $Builder $CompiledCleanExp1Source $CandidateSource
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path $CandidateSource)) {
+    throw "EXP2 candidate generation failed"
 }
 
-New-Item -ItemType Directory -Force -Path $ResultsRoot | Out-Null
 $CompileDir = Join-Path $ResultsRoot "compile"
 New-Item -ItemType Directory -Force -Path $CompileDir | Out-Null
 $CompileLog = Join-Path $CompileDir "metaeditor.log"
 
 Write-Host "Compiling $CandidateFile..."
 $compileProcess = Start-Process -FilePath $MetaEditor -ArgumentList @(
-    "/compile:$BranchSource",
+    "/compile:$CandidateSource",
     "/log:$CompileLog"
 ) -Wait -PassThru -NoNewWindow
 
@@ -53,9 +60,11 @@ if ($compileText -notmatch '0 error\(s\), 0 warning\(s\)') {
 
 $Stages = @(
     @{ Name = "smoke_1m"; From = "2025.06.01"; To = "2025.06.30" },
-    @{ Name = "screen_12m"; From = "2024.07.01"; To = "2025.06.30" },
-    @{ Name = "oos_6m"; From = "2025.07.01"; To = "2025.12.31" }
+    @{ Name = "screen_12m"; From = "2024.07.01"; To = "2025.06.30" }
 )
+if ($RunOos) {
+    $Stages += @{ Name = "oos_6m"; From = "2025.07.01"; To = "2025.12.31" }
+}
 
 function Convert-LeverageToInteger([string]$Value) {
     return [int]($Value.Split(':')[1])
@@ -66,7 +75,6 @@ function New-TesterConfig($Stage) {
     New-Item -ItemType Directory -Force -Path $stageDir | Out-Null
     $reportBase = Join-Path $stageDir "$($Stage.Name)_report"
     $configPath = Join-Path $stageDir "$($Stage.Name).ini"
-    $journalPath = Join-Path $stageDir "$($Stage.Name)_terminal.log"
     $leverageInt = Convert-LeverageToInteger $Leverage
 
     $config = @"
@@ -89,7 +97,7 @@ ShutdownTerminal=1
 Visual=0
 "@
     Set-Content -Path $configPath -Value $config -Encoding ASCII
-    return @{ Config = $configPath; ReportBase = $reportBase; Journal = $journalPath; Directory = $stageDir }
+    return @{ Config = $configPath; ReportBase = $reportBase; Directory = $stageDir }
 }
 
 foreach ($stage in $Stages) {
@@ -118,13 +126,13 @@ foreach ($stage in $Stages) {
         symbol = "EURUSD"
         timeframe = "H1"
         modeling = "every_tick_based_on_real_ticks"
-        start_date = $Stage.From.Replace('.', '-')
-        end_date = $Stage.To.Replace('.', '-')
+        start_date = $stage.From.Replace('.', '-')
+        end_date = $stage.To.Replace('.', '-')
         deposit = $Deposit
         currency = "USD"
         leverage = $Leverage
         demo_only = $true
-        source_path = $BranchSource
+        source_path = $CandidateSource
         report_path = $reportPath
     }
     $metadataPath = Join-Path $paths.Directory "$($stage.Name)_run_metadata.json"
@@ -132,4 +140,9 @@ foreach ($stage in $Stages) {
     Write-Host "Stage complete: $reportPath"
 }
 
-Write-Host "All requested MT5 stages completed. Reports are under $ResultsRoot"
+if (-not $RunOos) {
+    Write-Host "Smoke and 12-month screen completed. Do not run OOS unless the screen passes the locked evaluator gates."
+} else {
+    Write-Host "OOS stage completed because -RunOos was explicitly supplied."
+}
+Write-Host "Reports are under $ResultsRoot"
