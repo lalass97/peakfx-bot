@@ -39,11 +39,16 @@ jobs:
           ref: ${{ inputs.target_ref }}
           fetch-depth: 0
 
+      - name: Enable runner script execution
+        shell: cmd
+        run: >-
+          powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command
+          "Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force"
+
       - name: Install Python runtime
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
 
       - name: Verify required runner environment
         shell: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "& '{0}'"
@@ -79,7 +84,7 @@ jobs:
           $log = Join-Path $PWD "artifacts/logs/mt5_execution_$stamp.log"
           New-Item -ItemType Directory -Force -Path (Split-Path $log) | Out-Null
 
-          ./scripts/Run-MT5Pipeline.ps1 `
+          & "$PWD/scripts/Run-MT5Pipeline.ps1" `
             -MetaTraderRoot $env:MT5_ROOT `
             -RepoRoot $PWD `
             -SourceEA $env:EXP1_COMPILED_CLEAN_SOURCE `
