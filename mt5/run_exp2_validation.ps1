@@ -49,14 +49,23 @@ $compileProcess = Start-Process -FilePath $MetaEditor -ArgumentList @(
     "/log:$CompileLog"
 ) -Wait -PassThru -NoNewWindow
 
-if ($compileProcess.ExitCode -ne 0) {
-    throw "MetaEditor returned exit code $($compileProcess.ExitCode). See $CompileLog"
+# Some MetaEditor builds return exit code 1 even when the compiler log reports a
+# clean build. The compiler log is therefore the authoritative compile gate.
+if (-not (Test-Path $CompileLog)) {
+    throw "MetaEditor compile log was not created (exit code $($compileProcess.ExitCode))"
 }
-if (-not (Test-Path $CompileLog)) { throw "MetaEditor compile log was not created" }
 $compileText = Get-Content $CompileLog -Raw
-if ($compileText -notmatch '0 error\(s\), 0 warning\(s\)') {
-    throw "Compile gate failed. Required: 0 errors, 0 warnings. See $CompileLog"
+$cleanCompile = (
+    $compileText -match '(?i)\b0\s+errors?\s*,\s*0\s+warnings?\b' -or
+    $compileText -match '(?i)\b0\s+error\(s\)\s*,\s*0\s+warning\(s\)\b'
+)
+if (-not $cleanCompile) {
+    throw "Compile gate failed. Required: 0 errors, 0 warnings. MetaEditor exit code: $($compileProcess.ExitCode). See $CompileLog"
 }
+if ($compileProcess.ExitCode -ne 0) {
+    Write-Warning "MetaEditor returned exit code $($compileProcess.ExitCode), but the compile log proves 0 errors and 0 warnings. Continuing."
+}
+Write-Host "Compile gate passed: 0 errors, 0 warnings."
 
 $Stages = @(
     @{ Name = "smoke_1m"; From = "2025.06.01"; To = "2025.06.30" },
