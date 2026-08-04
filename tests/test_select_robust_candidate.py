@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from research.select_robust_candidate import evaluate_candidate, select_best
@@ -36,6 +38,11 @@ def test_selects_candidate_with_best_worst_period_profit_factor() -> None:
     assert result["winner"] == "balanced"
 
 
+def test_exact_tie_uses_candidate_id_ascending() -> None:
+    result = select_best([candidate("z_candidate"), candidate("a_candidate")])
+    assert result["winner"] == "a_candidate"
+
+
 def test_rejects_candidate_that_only_looks_profitable_in_sample() -> None:
     payload = candidate("overfit", screen_pf=1.80, oos_pf=1.01)
     result = evaluate_candidate(payload)
@@ -55,6 +62,33 @@ def test_rejects_all_when_nothing_qualifies() -> None:
     result = select_best([candidate("bad", oos_pf=1.00)])
     assert result["decision"] == "reject_all"
     assert result["winner"] is None
+
+
+def test_rejects_duplicate_candidate_ids() -> None:
+    with pytest.raises(ValueError, match="unique"):
+        select_best([candidate("duplicate"), candidate("duplicate")])
+
+
+@pytest.mark.parametrize("bad_value", [math.nan, math.inf, -math.inf])
+def test_rejects_non_finite_metrics(bad_value: float) -> None:
+    payload = candidate("non_finite")
+    payload["screen_12m"]["profit_factor"] = bad_value
+    with pytest.raises(ValueError, match="finite"):
+        evaluate_candidate(payload)
+
+
+@pytest.mark.parametrize(
+    "field,bad_value",
+    [
+        ("profit_factor", -0.01),
+        ("max_drawdown_percent", -0.01),
+    ],
+)
+def test_rejects_negative_bounded_metrics(field: str, bad_value: float) -> None:
+    payload = candidate("negative_metric")
+    payload["screen_12m"][field] = bad_value
+    with pytest.raises(ValueError, match="cannot be negative"):
+        evaluate_candidate(payload)
 
 
 @pytest.mark.parametrize(
