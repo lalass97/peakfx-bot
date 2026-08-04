@@ -27,23 +27,6 @@ SHORT_PATTERN = re.compile(
 )
 
 
-def _looks_like_utf16_without_bom(raw: bytes) -> str | None:
-    sample = raw[:4096]
-    if len(sample) < 4:
-        return None
-
-    even = sample[0::2]
-    odd = sample[1::2]
-    even_nul_ratio = even.count(0) / max(1, len(even))
-    odd_nul_ratio = odd.count(0) / max(1, len(odd))
-
-    if odd_nul_ratio > 0.30 and even_nul_ratio < 0.10:
-        return "utf-16-le"
-    if even_nul_ratio > 0.30 and odd_nul_ratio < 0.10:
-        return "utf-16-be"
-    return None
-
-
 def _read_mql5_source(path: Path) -> tuple[str, str]:
     raw = path.read_bytes()
     if raw.startswith(b"\xef\xbb\xbf"):
@@ -51,16 +34,26 @@ def _read_mql5_source(path: Path) -> tuple[str, str]:
     if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
         return raw.decode("utf-16"), "utf-16"
 
-    bomless_utf16 = _looks_like_utf16_without_bom(raw)
-    if bomless_utf16 is not None:
-        return raw.decode(bomless_utf16), bomless_utf16
+    # MetaEditor can save UTF-16 without a BOM. Detect embedded NULs before
+    # trying UTF-8, because UTF-8 decoding can otherwise succeed incorrectly.
+    sample = raw[:4096]
+    even_nuls = sample[0::2].count(0)
+    odd_nuls = sample[1::2].count(0)
+    pairs = max(1, len(sample) // 2)
+    if odd_nuls / pairs > 0.20 and even_nuls / pairs < 0.05:
+        return raw.decode("utf-16-le"), "utf-16-le"
+    if even_nuls / pairs > 0.20 and odd_nuls / pairs < 0.05:
+        return raw.decode("utf-16-be"), "utf-16-be"
 
     try:
         return raw.decode("utf-8"), "utf-8"
-    except UnicodeDecodeError as exc:
-        raise ValueError(
-            f"unsupported source encoding for {path}; expected UTF-8 or UTF-16"
-        ) from exc
+    except UnicodeDecodeError:
+        try:
+            return raw.decode("utf-16-le"), "utf-16-le"
+        except UnicodeDecodeError as exc:
+            raise ValueError(
+                f"unsupported source encoding for {path}; expected UTF-8 or UTF-16"
+            ) from exc
 
 
 def _replace_exactly_once(
@@ -86,12 +79,24 @@ def _replace_optional_once(source: str, old: str, new: str) -> str:
 
 def build_confirmed_breakout_exp2(source: str) -> str:
     candidate = source
-    candidate = _replace_exactly_once(
-        candidate,
-        ANY_VERSION_PATTERN,
-        lambda m: f'{m.group(1)}"1.45"{m.group(2)}',
-        "MQL5 version directive",
-    )
+
+    # Version metadata is not part of the trading hypothesis. Normalize it when
+    # present, but do not reject a compiled-clean local source if MetaEditor has
+    # omitted or reformatted the directive.
+    version_matches = list(ANY_VERSION_PATTERN.finditer(candidate))
+    if len(version_matches) > 1:
+        raise ValueError(
+            f"expected at most one MQL5 version directive, found {len(version_matches)}"
+        )
+    if len(version_matches) == 1:
+        candidate = ANY_VERSION_PATTERN.sub(
+            lambda m: f'{m.group(1)}"1.45"{m.group(2)}',
+            candidate,
+            count=1,
+        )
+
+    # These four markers define the actual EXP1 trading hypothesis and remain
+    # strict. The builder refuses to proceed unless all are present exactly once.
     candidate = _replace_exactly_once(
         candidate,
         MAGIC_PATTERN,
@@ -124,7 +129,6 @@ def build_confirmed_breakout_exp2(source: str) -> str:
     candidate = _replace_optional_once(candidate, SOURCE_DESCRIPTION, CANDIDATE_DESCRIPTION)
 
     required_literals = (
-        '"1.45"',
         "26073025",
         "peakfx_confirmed_breakout_exp2_events.csv",
         "c > g_setup.pullback_high + (0.20*atr)",
