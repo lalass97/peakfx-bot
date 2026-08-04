@@ -81,13 +81,15 @@ jobs:
           $builderText = $builderText.Replace("EXP3A", "EXP3B")
           $builderText = $builderText.Replace("exp3a", "exp3b")
           $builderText = $builderText.Replace("26073035", "26073030")
-          $builderText = [regex]::Replace(
-            $builderText,
-            'MinimumEfficiencyRatio(\s*)=(\s*)0\.35;',
-            'MinimumEfficiencyRatio$1=$20.30;'
+          $builderText = $builderText.Replace(
+            "MinimumEfficiencyRatio        = 0.35;",
+            "MinimumEfficiencyRatio        = 0.30;"
           )
           if ($builderText -match 'MinimumEfficiencyRatio\s*=\s*0\.35;') {
             throw "EXP3B builder still contains the stale ER 0.35 threshold"
+          }
+          if ($builderText -match '\$') {
+            throw "EXP3B builder contains an unexpected dollar-sign token"
           }
           Set-Content -Path $builderB -Value $builderText -Encoding UTF8
 
