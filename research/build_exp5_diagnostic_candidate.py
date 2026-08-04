@@ -67,8 +67,7 @@ void DiagnosticCountBlock(const string reason)
 
 void WriteDiagnosticSummary()
   {
-   string path = "PeakFX\\exp5_diagnostic_summary.csv";
-   FolderCreate("PeakFX", FILE_COMMON);
+   string path = "exp5_diagnostic_summary.csv";
    int handle = FileOpen(path, FILE_WRITE|FILE_CSV|FILE_ANSI|FILE_COMMON, ',');
    if(handle==INVALID_HANDLE)
      {
