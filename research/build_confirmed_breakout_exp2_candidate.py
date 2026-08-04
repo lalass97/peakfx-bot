@@ -2,24 +2,29 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import re
+import sys
 from pathlib import Path
 
 SOURCE_FILENAME = "PeakFX_EURUSD_H1_PULLBACK_CONFIRMED_BREAKOUT_EXP1.mq5"
 CANDIDATE_FILENAME = "PeakFX_EURUSD_H1_PULLBACK_CONFIRMED_BREAKOUT_EXP2.mq5"
 SOURCE_BANNER = "Version 1.44 - confirmed-breakout experiment"
 CANDIDATE_BANNER = "Version 1.45 - stronger confirmed-breakout experiment"
-SOURCE_VERSION = '#property version   "1.44"'
-CANDIDATE_VERSION = '#property version   "1.45"'
 SOURCE_DESCRIPTION = "trigger close must clear pullback extreme by 0.10 ATR"
 CANDIDATE_DESCRIPTION = "trigger close must clear pullback extreme by 0.20 ATR"
-SOURCE_MAGIC = "input long             MagicNumber                  = 26073024;"
-CANDIDATE_MAGIC = "input long             MagicNumber                  = 26073025;"
-SOURCE_TELEMETRY = 'input string           TelemetryFile                = "peakfx_confirmed_breakout_exp1_events.csv";'
-CANDIDATE_TELEMETRY = 'input string           TelemetryFile                = "peakfx_confirmed_breakout_exp2_events.csv";'
-SOURCE_LONG_CONDITION = "c > g_setup.pullback_high + (0.10*atr)"
-CANDIDATE_LONG_CONDITION = "c > g_setup.pullback_high + (0.20*atr)"
-SOURCE_SHORT_CONDITION = "c < g_setup.pullback_low - (0.10*atr)"
-CANDIDATE_SHORT_CONDITION = "c < g_setup.pullback_low - (0.20*atr)"
+
+VERSION_PATTERN = re.compile(r'(?m)^\s*#property\s+version\s+"1\.44"\s*$')
+MAGIC_PATTERN = re.compile(r'(?m)^(\s*input\s+long\s+MagicNumber\s*=\s*)26073024(\s*;\s*)$')
+TELEMETRY_PATTERN = re.compile(
+    r'(?m)^(\s*input\s+string\s+TelemetryFile\s*=\s*)'
+    r'"peakfx_confirmed_breakout_exp1_events\.csv"(\s*;\s*)$'
+)
+LONG_PATTERN = re.compile(
+    r'c\s*>\s*g_setup\.pullback_high\s*\+\s*\(\s*0\.10\s*\*\s*atr\s*\)'
+)
+SHORT_PATTERN = re.compile(
+    r'c\s*<\s*g_setup\.pullback_low\s*-\s*\(\s*0\.10\s*\*\s*atr\s*\)'
+)
 
 
 def _read_mql5_source(path: Path) -> tuple[str, str]:
@@ -39,10 +44,18 @@ def _read_mql5_source(path: Path) -> tuple[str, str]:
             ) from exc
 
 
-def _require_exact_count(source: str, marker: str, expected: int = 1) -> None:
-    count = source.count(marker)
-    if count != expected:
-        raise ValueError(f"expected {expected} source marker(s), found {count}: {marker}")
+def _replace_exactly_once(
+    source: str,
+    pattern: re.Pattern[str],
+    replacement: str | callable,
+    label: str,
+) -> str:
+    matches = list(pattern.finditer(source))
+    if len(matches) != 1:
+        raise ValueError(
+            f"expected exactly one {label} marker, found {len(matches)}"
+        )
+    return pattern.sub(replacement, source, count=1)
 
 
 def _replace_optional_once(source: str, old: str, new: str) -> str:
@@ -53,43 +66,64 @@ def _replace_optional_once(source: str, old: str, new: str) -> str:
 
 
 def build_confirmed_breakout_exp2(source: str) -> str:
-    # These markers define the actual trading experiment and must match exactly.
-    semantic_markers = (
-        SOURCE_VERSION,
-        SOURCE_MAGIC,
-        SOURCE_TELEMETRY,
-        SOURCE_LONG_CONDITION,
-        SOURCE_SHORT_CONDITION,
-    )
-    for marker in semantic_markers:
-        _require_exact_count(source, marker)
-
     candidate = source
-    candidate = candidate.replace(SOURCE_VERSION, CANDIDATE_VERSION, 1)
-    candidate = candidate.replace(SOURCE_MAGIC, CANDIDATE_MAGIC, 1)
-    candidate = candidate.replace(SOURCE_TELEMETRY, CANDIDATE_TELEMETRY, 1)
-    candidate = candidate.replace(SOURCE_LONG_CONDITION, CANDIDATE_LONG_CONDITION, 1)
-    candidate = candidate.replace(SOURCE_SHORT_CONDITION, CANDIDATE_SHORT_CONDITION, 1)
+    candidate = _replace_exactly_once(
+        candidate,
+        VERSION_PATTERN,
+        '#property version   "1.45"',
+        "EXP1 version",
+    )
+    candidate = _replace_exactly_once(
+        candidate,
+        MAGIC_PATTERN,
+        lambda m: f"{m.group(1)}26073025{m.group(2)}",
+        "EXP1 magic number",
+    )
+    candidate = _replace_exactly_once(
+        candidate,
+        TELEMETRY_PATTERN,
+        lambda m: (
+            f'{m.group(1)}"peakfx_confirmed_breakout_exp2_events.csv"{m.group(2)}'
+        ),
+        "EXP1 telemetry",
+    )
+    candidate = _replace_exactly_once(
+        candidate,
+        LONG_PATTERN,
+        "c > g_setup.pullback_high + (0.20*atr)",
+        "EXP1 long trigger",
+    )
+    candidate = _replace_exactly_once(
+        candidate,
+        SHORT_PATTERN,
+        "c < g_setup.pullback_low - (0.20*atr)",
+        "EXP1 short trigger",
+    )
 
-    # Header filename, banner, and description are documentation-only and may
-    # differ in whitespace or wording in a locally compiled-clean copy.
     candidate = _replace_optional_once(candidate, SOURCE_FILENAME, CANDIDATE_FILENAME)
     candidate = _replace_optional_once(candidate, SOURCE_BANNER, CANDIDATE_BANNER)
     candidate = _replace_optional_once(candidate, SOURCE_DESCRIPTION, CANDIDATE_DESCRIPTION)
 
-    required_candidate_markers = (
-        CANDIDATE_VERSION,
-        CANDIDATE_MAGIC,
-        CANDIDATE_TELEMETRY,
-        CANDIDATE_LONG_CONDITION,
-        CANDIDATE_SHORT_CONDITION,
+    required_literals = (
+        '#property version   "1.45"',
+        "26073025",
+        "peakfx_confirmed_breakout_exp2_events.csv",
+        "c > g_setup.pullback_high + (0.20*atr)",
+        "c < g_setup.pullback_low - (0.20*atr)",
     )
-    for marker in required_candidate_markers:
-        _require_exact_count(candidate, marker)
+    for marker in required_literals:
+        if candidate.count(marker) != 1:
+            raise ValueError(f"candidate validation failed for marker: {marker}")
 
-    for marker in semantic_markers:
-        if marker in candidate:
-            raise ValueError(f"stale semantic source marker remains: {marker}")
+    stale_patterns = (
+        VERSION_PATTERN,
+        MAGIC_PATTERN,
+        TELEMETRY_PATTERN,
+        LONG_PATTERN,
+        SHORT_PATTERN,
+    )
+    if any(pattern.search(candidate) for pattern in stale_patterns):
+        raise ValueError("stale EXP1 semantic marker remains after conversion")
 
     return candidate
 
@@ -102,17 +136,21 @@ def main(argv: list[str] | None = None) -> int:
 
     source_path = Path(args.source)
     output_path = Path(args.output)
-    source, detected_encoding = _read_mql5_source(source_path)
-    source_sha256 = hashlib.sha256(source_path.read_bytes()).hexdigest()
-    print(
-        f"EXP2 builder source={source_path} encoding={detected_encoding} "
-        f"sha256={source_sha256}"
-    )
-    candidate = build_confirmed_breakout_exp2(source)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(candidate, encoding="utf-8", newline="\n")
-    print(f"EXP2 candidate written: {output_path}")
-    return 0
+    try:
+        source, detected_encoding = _read_mql5_source(source_path)
+        source_sha256 = hashlib.sha256(source_path.read_bytes()).hexdigest()
+        print(
+            f"EXP2 builder source={source_path} encoding={detected_encoding} "
+            f"sha256={source_sha256}"
+        )
+        candidate = build_confirmed_breakout_exp2(source)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(candidate, encoding="utf-8", newline="\n")
+        print(f"EXP2 candidate written: {output_path}")
+        return 0
+    except Exception as exc:
+        print(f"EXP2_BUILDER_ERROR: {type(exc).__name__}: {exc}", file=sys.stdout)
+        return 2
 
 
 if __name__ == "__main__":
