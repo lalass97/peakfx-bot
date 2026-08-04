@@ -54,7 +54,11 @@ function Find-Report([string]$stem,[datetime]$started,[string]$stageDir){
   return $all|Sort-Object LastWriteTime -Descending|Select-Object -First 1
 }
 
-$commonDiag=Join-Path $env:APPDATA "MetaQuotes\Terminal\Common\Files\PeakFX\exp5_diagnostic_summary.csv"
+$commonFiles=Join-Path $env:APPDATA "MetaQuotes\Terminal\Common\Files"
+$commonDiagCandidates=@(
+  (Join-Path $commonFiles "exp5_diagnostic_summary.csv"),
+  (Join-Path $commonFiles "PeakFX\exp5_diagnostic_summary.csv")
+)
 $stages=@(
   @{Name="smoke_1m";From="2025.06.01";To="2025.06.30"},
   @{Name="screen_12m";From="2024.07.01";To="2025.06.30"}
@@ -62,7 +66,7 @@ $stages=@(
 $lev=[int]($Leverage.Split(':')[1])
 foreach($s in $stages){
   $dir=Join-Path $root $s.Name; New-Item -ItemType Directory -Force -Path $dir|Out-Null
-  if(Test-Path $commonDiag){Remove-Item $commonDiag -Force}
+  foreach($diagPath in $commonDiagCandidates){if(Test-Path $diagPath){Remove-Item $diagPath -Force}}
   $stem="$($s.Name)_report"; $ini=Join-Path $dir "$($s.Name).ini"
   @"
 [Tester]
@@ -88,7 +92,8 @@ Visual=0
   $report=Find-Report $stem $started $dir
   if(-not$report){throw "No report found for $($s.Name), terminal exit $($tp.ExitCode)"}
   $dest=Join-Path $dir $report.Name; if($report.FullName-ine$dest){Copy-Item $report.FullName $dest -Force}
-  if(-not(Test-Path $commonDiag)){throw "Diagnostic summary missing after $($s.Name): $commonDiag"}
+  $commonDiag=$commonDiagCandidates|Where-Object{Test-Path $_}|Sort-Object{(Get-Item $_).LastWriteTime}-Descending|Select-Object -First 1
+  if(-not$commonDiag){throw "Diagnostic summary missing after $($s.Name). Checked: $($commonDiagCandidates -join '; ')"}
   Copy-Item $commonDiag (Join-Path $dir "$($s.Name)_diagnostic_summary.csv") -Force
   [ordered]@{
     candidate_id="peakfx_exp5_diagnostic_v1_47"; parent="peakfx_exp3a_er20_035_v1_46";
