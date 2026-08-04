@@ -23,7 +23,8 @@ def test_builds_isolated_exp2() -> None:
     assert "Version 1.45 - stronger confirmed-breakout experiment" in candidate
     assert '#property version   "1.45"' in candidate
     assert "trigger close must clear pullback extreme by 0.20 ATR" in candidate
-    assert candidate.count("0.20*atr") == 2
+    assert "c > g_setup.pullback_high + (0.20*atr)" in candidate
+    assert "c < g_setup.pullback_low - (0.20*atr)" in candidate
     assert "26073025" in candidate
     assert "peakfx_confirmed_breakout_exp2_events.csv" in candidate
 
@@ -38,9 +39,13 @@ def test_builds_isolated_exp2() -> None:
 @pytest.mark.parametrize(
     "damaged_source",
     [
-        SOURCE.replace("0.10*atr", "0.11*atr", 1),
+        SOURCE.replace("c > g_setup.pullback_high + (0.10*atr)", "c >= g_setup.pullback_high + (0.10*atr)"),
+        SOURCE.replace("c < g_setup.pullback_low - (0.10*atr)", "c < g_setup.pullback_high - (0.10*atr)"),
+        SOURCE.replace("c < g_setup.pullback_low - (0.10*atr)", "c > g_setup.pullback_low - (0.10*atr)"),
         SOURCE.replace("PeakFX_EURUSD_H1_PULLBACK_CONFIRMED_BREAKOUT_EXP1.mq5", "wrong.mq5"),
         SOURCE.replace("Version 1.44 - confirmed-breakout experiment", "Version 1.44"),
+        SOURCE.replace('#property version   "1.44"', '#property version   "1.43"'),
+        SOURCE.replace("trigger close must clear pullback extreme by 0.10 ATR", "trigger changed"),
         SOURCE.replace("26073024", "26073099"),
         SOURCE.replace("peakfx_confirmed_breakout_exp1_events.csv", "wrong.csv"),
     ],
@@ -48,6 +53,15 @@ def test_builds_isolated_exp2() -> None:
 def test_fails_closed_on_changed_source_markers(damaged_source: str) -> None:
     with pytest.raises(ValueError):
         build_confirmed_breakout_exp2(damaged_source)
+
+
+def test_fails_closed_when_unrelated_margin_occurrences_mask_damage() -> None:
+    damaged = SOURCE.replace(
+        "c > g_setup.pullback_high + (0.10*atr)",
+        "c > g_setup.pullback_low + (0.10*atr)",
+    ) + "// unrelated diagnostic 0.10*atr\n"
+    with pytest.raises(ValueError):
+        build_confirmed_breakout_exp2(damaged)
 
 
 def test_fails_closed_on_duplicate_identity_marker() -> None:
