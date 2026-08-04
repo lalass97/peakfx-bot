@@ -57,7 +57,6 @@ def validate_run(payload: dict[str, Any]) -> ValidationResult:
         errors.append(f"unknown_field:{','.join(sorted(unknown))}")
     if missing:
         errors.append(f"missing_field:{','.join(sorted(missing))}")
-    if errors:
         return ValidationResult(False, tuple(errors))
 
     if payload["candidate_id"] != "peakfx_confirmed_breakout_exp2_v1_45":
@@ -112,7 +111,7 @@ def validate_run(payload: dict[str, Any]) -> ValidationResult:
             errors.append(f"unknown_metric:{','.join(sorted(metric_unknown))}")
         if metric_missing:
             errors.append(f"missing_metric:{','.join(sorted(metric_missing))}")
-        if not metric_unknown and not metric_missing:
+        if not metric_missing:
             for key in ("net_profit", "profit_factor", "expected_payoff", "max_drawdown_percent"):
                 value = metrics[key]
                 if isinstance(value, bool) or not isinstance(value, (int, float)):
