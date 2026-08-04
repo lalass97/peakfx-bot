@@ -13,7 +13,7 @@ CANDIDATE_BANNER = "Version 1.45 - stronger confirmed-breakout experiment"
 SOURCE_DESCRIPTION = "trigger close must clear pullback extreme by 0.10 ATR"
 CANDIDATE_DESCRIPTION = "trigger close must clear pullback extreme by 0.20 ATR"
 
-VERSION_PATTERN = re.compile(r'(?m)^\s*#property\s+version\s+"1\.44"\s*$')
+ANY_VERSION_PATTERN = re.compile(r'(?m)^(\s*#property\s+version\s+)"[^"]+"(\s*)$')
 MAGIC_PATTERN = re.compile(r'(?m)^(\s*input\s+long\s+MagicNumber\s*=\s*)26073024(\s*;\s*)$')
 TELEMETRY_PATTERN = re.compile(
     r'(?m)^(\s*input\s+string\s+TelemetryFile\s*=\s*)'
@@ -67,12 +67,18 @@ def _replace_optional_once(source: str, old: str, new: str) -> str:
 
 def build_confirmed_breakout_exp2(source: str) -> str:
     candidate = source
+
+    # The version directive is metadata, not trading logic. Require exactly one
+    # directive but normalize whatever local formatting/value is present.
     candidate = _replace_exactly_once(
         candidate,
-        VERSION_PATTERN,
-        '#property version   "1.45"',
-        "EXP1 version",
+        ANY_VERSION_PATTERN,
+        lambda m: f'{m.group(1)}"1.45"{m.group(2)}',
+        "MQL5 version directive",
     )
+
+    # These four markers define the actual EXP1 trading hypothesis and remain
+    # strict. The builder refuses to proceed unless all are present exactly once.
     candidate = _replace_exactly_once(
         candidate,
         MAGIC_PATTERN,
@@ -105,7 +111,7 @@ def build_confirmed_breakout_exp2(source: str) -> str:
     candidate = _replace_optional_once(candidate, SOURCE_DESCRIPTION, CANDIDATE_DESCRIPTION)
 
     required_literals = (
-        '#property version   "1.45"',
+        '"1.45"',
         "26073025",
         "peakfx_confirmed_breakout_exp2_events.csv",
         "c > g_setup.pullback_high + (0.20*atr)",
@@ -116,7 +122,6 @@ def build_confirmed_breakout_exp2(source: str) -> str:
             raise ValueError(f"candidate validation failed for marker: {marker}")
 
     stale_patterns = (
-        VERSION_PATTERN,
         MAGIC_PATTERN,
         TELEMETRY_PATTERN,
         LONG_PATTERN,
@@ -130,7 +135,7 @@ def build_confirmed_breakout_exp2(source: str) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build PeakFX confirmed-breakout EXP2")
-    parser.add_argument("source", help="Exact compiled-clean v1.44 source")
+    parser.add_argument("source", help="Exact compiled-clean EXP1 source")
     parser.add_argument("output", help="Destination v1.45 .mq5 path")
     args = parser.parse_args(argv)
 
