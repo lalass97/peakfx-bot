@@ -34,10 +34,17 @@ Write-Host "Generating isolated EXP3A ER candidate from EXP2 parent..."
 & python $Exp3Builder $Exp2Source $CandidateSource
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path $CandidateSource)) { throw "EXP3A candidate generation failed" }
 
-$ExpertsDir = Join-Path $MetaTraderRoot "MQL5\Experts\PeakFX"
+# Deploy into the active writable MT5 data folder, exactly like the successful EXP2 run.
+# MT5_ROOT points to Program Files and is not writable by the runner.
+$ActiveExpertsRoot = Split-Path -Parent $CompiledCleanExp1Source
+if ((Split-Path -Leaf $ActiveExpertsRoot) -eq "PeakFX") {
+    $ActiveExpertsRoot = Split-Path -Parent $ActiveExpertsRoot
+}
+$ExpertsDir = Join-Path $ActiveExpertsRoot "PeakFX"
 New-Item -ItemType Directory -Force -Path $ExpertsDir | Out-Null
 $DeployedSource = Join-Path $ExpertsDir "$CandidateName.mq5"
 Copy-Item $CandidateSource $DeployedSource -Force
+Write-Host "Deployed EXP3A source to active MT5 data folder: $DeployedSource"
 
 $CompileDir = Join-Path $ResultsRoot "compile"
 New-Item -ItemType Directory -Force -Path $CompileDir | Out-Null
@@ -93,7 +100,7 @@ Visual=0
         stage=$stage.Name; symbol="EURUSD"; timeframe="H1"; modeling="every_tick_based_on_real_ticks"
         start_date=$stage.From.Replace('.','-'); end_date=$stage.To.Replace('.','-')
         deposit=$Deposit; currency="USD"; leverage=$Leverage; demo_only=$true
-        source_path=$CandidateSource; report_path=$reportPath
+        source_path=$CandidateSource; deployed_source_path=$DeployedSource; report_path=$reportPath
     } | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $stageDir "$($stage.Name)_run_metadata.json") -Encoding UTF8
     Write-Host "Stage complete: $reportPath"
 }
