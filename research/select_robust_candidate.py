@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -25,10 +26,15 @@ class CandidateResult:
 def _number(value: Any, name: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{name} must be numeric")
-    return float(value)
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError(f"{name} must be finite")
+    return number
 
 
 def _stage(payload: dict[str, Any], name: str) -> dict[str, float | int]:
+    if not isinstance(payload, dict):
+        raise ValueError(f"{name} must be an object")
     required = {
         "net_profit",
         "profit_factor",
@@ -47,7 +53,7 @@ def _stage(payload: dict[str, Any], name: str) -> dict[str, float | int]:
     if isinstance(safety_violations, bool) or not isinstance(safety_violations, int) or safety_violations < 0:
         raise ValueError(f"{name}.safety_violations must be a non-negative integer")
 
-    return {
+    result: dict[str, float | int] = {
         "net_profit": _number(payload["net_profit"], f"{name}.net_profit"),
         "profit_factor": _number(payload["profit_factor"], f"{name}.profit_factor"),
         "expected_payoff": _number(payload["expected_payoff"], f"{name}.expected_payoff"),
@@ -55,9 +61,16 @@ def _stage(payload: dict[str, Any], name: str) -> dict[str, float | int]:
         "max_drawdown_percent": _number(payload["max_drawdown_percent"], f"{name}.max_drawdown_percent"),
         "safety_violations": safety_violations,
     }
+    if result["profit_factor"] < 0:
+        raise ValueError(f"{name}.profit_factor cannot be negative")
+    if result["max_drawdown_percent"] < 0:
+        raise ValueError(f"{name}.max_drawdown_percent cannot be negative")
+    return result
 
 
 def evaluate_candidate(payload: dict[str, Any]) -> CandidateResult:
+    if not isinstance(payload, dict):
+        raise ValueError("candidate must be an object")
     if set(payload) != {"candidate_id", "screen_12m", "oos_6m"}:
         raise ValueError("candidate must contain exactly candidate_id, screen_12m, and oos_6m")
     candidate_id = payload["candidate_id"]
@@ -98,18 +111,21 @@ def evaluate_candidate(payload: dict[str, Any]) -> CandidateResult:
 
 
 def select_best(payload: list[dict[str, Any]]) -> dict[str, Any]:
-    if not payload:
+    if not isinstance(payload, list) or not payload:
         raise ValueError("at least one candidate is required")
     results = [evaluate_candidate(item) for item in payload]
+    candidate_ids = [item.candidate_id for item in results]
+    if len(candidate_ids) != len(set(candidate_ids)):
+        raise ValueError("candidate_id values must be unique")
+
     qualified = [item for item in results if item.qualified]
     qualified.sort(
         key=lambda item: (
-            item.worst_profit_factor,
-            item.total_net_profit,
-            -item.worst_drawdown_percent,
+            -item.worst_profit_factor,
+            -item.total_net_profit,
+            item.worst_drawdown_percent,
             item.candidate_id,
-        ),
-        reverse=True,
+        )
     )
     winner = qualified[0].candidate_id if qualified else None
     return {
