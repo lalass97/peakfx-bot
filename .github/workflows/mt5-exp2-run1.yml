@@ -25,7 +25,7 @@ env:
 jobs:
   run1:
     name: Compile, smoke, and 12-month screen
-    runs-on: [self-hosted, Windows, X64, mt5]
+    runs-on: [self-hosted, Windows, X64]
     timeout-minutes: 180
 
     steps:
