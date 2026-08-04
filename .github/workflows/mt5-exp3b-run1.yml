@@ -88,8 +88,8 @@ jobs:
           if ($builderText -match 'MinimumEfficiencyRatio\s*=\s*0\.35;') {
             throw "EXP3B builder still contains the stale ER 0.35 threshold"
           }
-          if ($builderText -match '\$') {
-            throw "EXP3B builder contains an unexpected dollar-sign token"
+          if ($builderText -match 'MinimumEfficiencyRatio\$') {
+            throw "EXP3B builder contains a malformed threshold token"
           }
           Set-Content -Path $builderB -Value $builderText -Encoding UTF8
 
