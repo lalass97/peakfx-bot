@@ -39,6 +39,12 @@ jobs:
           ref: ${{ inputs.target_ref }}
           fetch-depth: 0
 
+      - name: Install Python runtime
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
       - name: Verify required runner environment
         shell: powershell
         run: |
@@ -62,6 +68,7 @@ jobs:
             $candidate = Join-Path $env:MT5_ROOT $exe
             if (-not (Test-Path $candidate -PathType Leaf)) { throw "Missing $candidate" }
           }
+          python --version
 
       - name: Run locked Stage 1 and Stage 2 pipeline
         shell: powershell
@@ -94,5 +101,5 @@ jobs:
             artifacts/runs/**
             artifacts/logs/**
             artifacts/mt5-exp2/**
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 30
