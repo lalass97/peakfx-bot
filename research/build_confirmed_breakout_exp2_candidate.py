@@ -31,7 +31,6 @@ def _read_mql5_source(path: Path) -> tuple[str, str]:
     try:
         return raw.decode("utf-8"), "utf-8"
     except UnicodeDecodeError:
-        # MetaEditor commonly saves MQL5 files as UTF-16 LE without a BOM.
         try:
             return raw.decode("utf-16-le"), "utf-16-le"
         except UnicodeDecodeError as exc:
@@ -46,51 +45,51 @@ def _require_exact_count(source: str, marker: str, expected: int = 1) -> None:
         raise ValueError(f"expected {expected} source marker(s), found {count}: {marker}")
 
 
+def _replace_optional_once(source: str, old: str, new: str) -> str:
+    count = source.count(old)
+    if count > 1:
+        raise ValueError(f"ambiguous optional source marker, found {count}: {old}")
+    return source.replace(old, new, 1) if count == 1 else source
+
+
 def build_confirmed_breakout_exp2(source: str) -> str:
-    source_markers = (
-        SOURCE_FILENAME,
-        SOURCE_BANNER,
+    # These markers define the actual trading experiment and must match exactly.
+    semantic_markers = (
         SOURCE_VERSION,
-        SOURCE_DESCRIPTION,
         SOURCE_MAGIC,
         SOURCE_TELEMETRY,
         SOURCE_LONG_CONDITION,
         SOURCE_SHORT_CONDITION,
     )
-    for marker in source_markers:
+    for marker in semantic_markers:
         _require_exact_count(source, marker)
 
-    replacements = (
-        (SOURCE_FILENAME, CANDIDATE_FILENAME),
-        (SOURCE_BANNER, CANDIDATE_BANNER),
-        (SOURCE_VERSION, CANDIDATE_VERSION),
-        (SOURCE_DESCRIPTION, CANDIDATE_DESCRIPTION),
-        (SOURCE_MAGIC, CANDIDATE_MAGIC),
-        (SOURCE_TELEMETRY, CANDIDATE_TELEMETRY),
-        (SOURCE_LONG_CONDITION, CANDIDATE_LONG_CONDITION),
-        (SOURCE_SHORT_CONDITION, CANDIDATE_SHORT_CONDITION),
-    )
-
     candidate = source
-    for old, new in replacements:
-        candidate = candidate.replace(old, new)
+    candidate = candidate.replace(SOURCE_VERSION, CANDIDATE_VERSION, 1)
+    candidate = candidate.replace(SOURCE_MAGIC, CANDIDATE_MAGIC, 1)
+    candidate = candidate.replace(SOURCE_TELEMETRY, CANDIDATE_TELEMETRY, 1)
+    candidate = candidate.replace(SOURCE_LONG_CONDITION, CANDIDATE_LONG_CONDITION, 1)
+    candidate = candidate.replace(SOURCE_SHORT_CONDITION, CANDIDATE_SHORT_CONDITION, 1)
 
-    candidate_markers = (
-        CANDIDATE_FILENAME,
-        CANDIDATE_BANNER,
+    # Header filename, banner, and description are documentation-only and may
+    # differ in whitespace or wording in a locally compiled-clean copy.
+    candidate = _replace_optional_once(candidate, SOURCE_FILENAME, CANDIDATE_FILENAME)
+    candidate = _replace_optional_once(candidate, SOURCE_BANNER, CANDIDATE_BANNER)
+    candidate = _replace_optional_once(candidate, SOURCE_DESCRIPTION, CANDIDATE_DESCRIPTION)
+
+    required_candidate_markers = (
         CANDIDATE_VERSION,
-        CANDIDATE_DESCRIPTION,
         CANDIDATE_MAGIC,
         CANDIDATE_TELEMETRY,
         CANDIDATE_LONG_CONDITION,
         CANDIDATE_SHORT_CONDITION,
     )
-    for marker in candidate_markers:
+    for marker in required_candidate_markers:
         _require_exact_count(candidate, marker)
 
-    for marker in source_markers:
+    for marker in semantic_markers:
         if marker in candidate:
-            raise ValueError(f"stale source marker remains: {marker}")
+            raise ValueError(f"stale semantic source marker remains: {marker}")
 
     return candidate
 
