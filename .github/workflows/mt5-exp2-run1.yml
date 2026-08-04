@@ -41,9 +41,9 @@ jobs:
 
       - name: Enable runner script execution
         shell: cmd
-        run: >-
-          powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command
-          "Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force"
+        run: |
+          reg.exe ADD "HKCU\Software\Microsoft\PowerShell\1\ShellIds\Microsoft.PowerShell" /v ExecutionPolicy /t REG_SZ /d RemoteSigned /f
+          reg.exe QUERY "HKCU\Software\Microsoft\PowerShell\1\ShellIds\Microsoft.PowerShell" /v ExecutionPolicy
 
       - name: Install Python runtime
         uses: actions/setup-python@v5
