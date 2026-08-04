@@ -38,19 +38,24 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $required = @(
-            $env:MT5_ROOT,
-            $env:EXP1_COMPILED_CLEAN_SOURCE
-          )
-          if ($required | Where-Object { [string]::IsNullOrWhiteSpace($_) }) {
-            throw "Runner must define MT5_ROOT and EXP1_COMPILED_CLEAN_SOURCE environment variables."
+          if ([string]::IsNullOrWhiteSpace($env:MT5_ROOT)) {
+            throw "Runner must define MT5_ROOT."
           }
-          foreach ($path in $required) {
-            if (-not (Test-Path $path)) { throw "Required path not found: $path" }
+          if ([string]::IsNullOrWhiteSpace($env:EXP1_COMPILED_CLEAN_SOURCE)) {
+            throw "Runner must define EXP1_COMPILED_CLEAN_SOURCE."
+          }
+          if (-not (Test-Path $env:MT5_ROOT -PathType Container)) {
+            throw "MT5_ROOT must be an existing directory: $env:MT5_ROOT"
+          }
+          if (-not (Test-Path $env:EXP1_COMPILED_CLEAN_SOURCE -PathType Leaf)) {
+            throw "EXP1_COMPILED_CLEAN_SOURCE must be an existing source file: $env:EXP1_COMPILED_CLEAN_SOURCE"
+          }
+          if ([System.IO.Path]::GetExtension($env:EXP1_COMPILED_CLEAN_SOURCE) -ne ".mq5") {
+            throw "EXP1_COMPILED_CLEAN_SOURCE must point to the verified .mq5 source, not an .ex5 binary."
           }
           foreach ($exe in @("metaeditor64.exe", "terminal64.exe")) {
             $candidate = Join-Path $env:MT5_ROOT $exe
-            if (-not (Test-Path $candidate)) { throw "Missing $candidate" }
+            if (-not (Test-Path $candidate -PathType Leaf)) { throw "Missing $candidate" }
           }
 
       - name: Run locked Stage 1 and Stage 2 pipeline
@@ -65,7 +70,7 @@ jobs:
           ./scripts/Run-MT5Pipeline.ps1 `
             -MetaTraderRoot $env:MT5_ROOT `
             -RepoRoot $PWD `
-            -CompiledCleanExp1Source $env:EXP1_COMPILED_CLEAN_SOURCE `
+            -SourceEA $env:EXP1_COMPILED_CLEAN_SOURCE `
             -ConfigPath "$PWD/research/gatekeeper_rules.json" `
             -Symbol "EURUSD" `
             -Period "H1" `
@@ -83,5 +88,6 @@ jobs:
           path: |
             artifacts/runs/**
             artifacts/logs/**
+            artifacts/mt5-exp2/**
           if-no-files-found: error
           retention-days: 30
