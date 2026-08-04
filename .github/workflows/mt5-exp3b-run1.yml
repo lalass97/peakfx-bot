@@ -61,42 +61,54 @@ jobs:
         shell: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "& '{0}'"
         run: |
           $ErrorActionPreference = "Stop"
-          $builder = "$PWD/research/build_confirmed_breakout_exp3a_candidate.py"
-          $runner = "$PWD/mt5/run_exp3a_validation.ps1"
 
-          $builderText = Get-Content $builder -Raw
-          $thresholdPattern = 'MinimumEfficiencyRatio\s*=\s*0\.35;'
-          $thresholdMatches = [regex]::Matches($builderText, $thresholdPattern).Count
-          if ($thresholdMatches -lt 1) {
-            throw "EXP3B builder preparation found no ER 0.35 threshold marker"
+          $builderA = "$PWD/research/build_confirmed_breakout_exp3a_candidate.py"
+          $builderB = "$PWD/research/build_confirmed_breakout_exp3b_candidate.py"
+          $runnerA = "$PWD/mt5/run_exp3a_validation.ps1"
+          $runnerB = "$PWD/mt5/run_exp3b_validation.ps1"
+
+          foreach ($required in @($builderA,$runnerA)) {
+            if (-not (Test-Path $required -PathType Leaf)) { throw "EXP3B preparation source missing: $required" }
+          }
+
+          Copy-Item -LiteralPath $builderA -Destination $builderB -Force
+          Copy-Item -LiteralPath $runnerA -Destination $runnerB -Force
+
+          $builderText = Get-Content $builderB -Raw
+          if ($builderText -notmatch 'MinimumEfficiencyRatio\s*=\s*0\.35;') {
+            throw "EXP3B builder preparation could not find the ER 0.35 threshold"
           }
           $builderText = $builderText.Replace("EXP3A", "EXP3B")
           $builderText = $builderText.Replace("exp3a", "exp3b")
           $builderText = $builderText.Replace("26073035", "26073030")
-          $builderText = [regex]::Replace($builderText, $thresholdPattern, 'MinimumEfficiencyRatio        = 0.30;')
-          if ([regex]::Matches($builderText, 'MinimumEfficiencyRatio\s*=\s*0\.30;').Count -lt 1) {
-            throw "EXP3B threshold replacement did not produce ER 0.30"
+          $builderText = [regex]::Replace(
+            $builderText,
+            'MinimumEfficiencyRatio(\s*)=(\s*)0\.35;',
+            'MinimumEfficiencyRatio$1=$20.30;'
+          )
+          if ($builderText -match 'MinimumEfficiencyRatio\s*=\s*0\.35;') {
+            throw "EXP3B builder still contains the stale ER 0.35 threshold"
           }
-          if ([regex]::Matches($builderText, $thresholdPattern).Count -ne 0) {
-            throw "Stale ER 0.35 threshold remains after EXP3B preparation"
-          }
-          Set-Content -Path $builder -Value $builderText -Encoding UTF8
+          Set-Content -Path $builderB -Value $builderText -Encoding UTF8
 
-          $runnerText = Get-Content $runner -Raw
+          $runnerText = Get-Content $runnerB -Raw
           $runnerText = $runnerText.Replace("EXP3A", "EXP3B")
           $runnerText = $runnerText.Replace("exp3a", "exp3b")
           $runnerText = $runnerText.Replace("er20_035", "er20_030")
           $runnerText = $runnerText.Replace("ER(20) >= 0.35", "ER(20) >= 0.30")
-          Set-Content -Path $runner -Value $runnerText -Encoding UTF8
+          Set-Content -Path $runnerB -Value $runnerText -Encoding UTF8
 
-          Select-String -Path $builder -Pattern "MinimumEfficiencyRatio.*0.30|26073030|EXP3B"
-          Select-String -Path $runner -Pattern "mt5-exp3b|er20_030|ER\(20\).*0.30"
+          foreach ($prepared in @($builderB,$runnerB)) {
+            if (-not (Test-Path $prepared -PathType Leaf)) { throw "Prepared EXP3B file missing: $prepared" }
+          }
+          Select-String -Path $builderB -Pattern "MinimumEfficiencyRatio.*0.30|26073030|EXP3B"
+          Select-String -Path $runnerB -Pattern "mt5-exp3b|er20_030|ER\(20\).*0.30|build_confirmed_breakout_exp3b_candidate"
 
       - name: Run locked EXP3B Stage 1 and Stage 2 screen
         shell: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "& '{0}'"
         run: |
           $ErrorActionPreference = "Stop"
-          & "$PWD/mt5/run_exp3a_validation.ps1" `
+          & "$PWD/mt5/run_exp3b_validation.ps1" `
             -MetaTraderRoot $env:MT5_ROOT `
             -RepoRoot $PWD `
             -CompiledCleanExp1Source $env:EXP1_COMPILED_CLEAN_SOURCE `
