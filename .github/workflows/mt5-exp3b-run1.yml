@@ -65,13 +65,21 @@ jobs:
           $runner = "$PWD/mt5/run_exp3a_validation.ps1"
 
           $builderText = Get-Content $builder -Raw
-          if (($builderText.Split("MinimumEfficiencyRatio        = 0.35;").Count - 1) -ne 2) {
-            throw "EXP3B builder preparation expected exactly two ER 0.35 markers"
+          $thresholdPattern = 'MinimumEfficiencyRatio\s*=\s*0\.35;'
+          $thresholdMatches = [regex]::Matches($builderText, $thresholdPattern).Count
+          if ($thresholdMatches -lt 1) {
+            throw "EXP3B builder preparation found no ER 0.35 threshold marker"
           }
           $builderText = $builderText.Replace("EXP3A", "EXP3B")
           $builderText = $builderText.Replace("exp3a", "exp3b")
           $builderText = $builderText.Replace("26073035", "26073030")
-          $builderText = $builderText.Replace("MinimumEfficiencyRatio        = 0.35;", "MinimumEfficiencyRatio        = 0.30;")
+          $builderText = [regex]::Replace($builderText, $thresholdPattern, 'MinimumEfficiencyRatio        = 0.30;')
+          if ([regex]::Matches($builderText, 'MinimumEfficiencyRatio\s*=\s*0\.30;').Count -lt 1) {
+            throw "EXP3B threshold replacement did not produce ER 0.30"
+          }
+          if ([regex]::Matches($builderText, $thresholdPattern).Count -ne 0) {
+            throw "Stale ER 0.35 threshold remains after EXP3B preparation"
+          }
           Set-Content -Path $builder -Value $builderText -Encoding UTF8
 
           $runnerText = Get-Content $runner -Raw
