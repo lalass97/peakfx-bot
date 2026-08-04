@@ -40,7 +40,7 @@ jobs:
           fetch-depth: 0
 
       - name: Verify required runner environment
-        shell: pwsh
+        shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
           if ([string]::IsNullOrWhiteSpace($env:MT5_ROOT)) {
@@ -64,7 +64,7 @@ jobs:
           }
 
       - name: Run locked Stage 1 and Stage 2 pipeline
-        shell: pwsh
+        shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
           $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
