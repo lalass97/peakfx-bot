@@ -1,0 +1,87 @@
+name: MT5 EXP2 Run 1
+
+on:
+  workflow_dispatch:
+    inputs:
+      fixed_spread_points:
+        description: Recorded spread stress floor in points (not silently assumed enforced)
+        required: true
+        default: "15"
+      deposit:
+        description: Test deposit
+        required: true
+        default: "10000"
+      leverage:
+        description: Leverage, e.g. 100
+        required: true
+        default: "100"
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUTF8: "1"
+
+jobs:
+  run1:
+    name: Compile, smoke, and 12-month screen
+    runs-on: [self-hosted, Windows, X64, mt5]
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify required runner environment
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $required = @(
+            $env:MT5_ROOT,
+            $env:EXP1_COMPILED_CLEAN_SOURCE
+          )
+          if ($required | Where-Object { [string]::IsNullOrWhiteSpace($_) }) {
+            throw "Runner must define MT5_ROOT and EXP1_COMPILED_CLEAN_SOURCE environment variables."
+          }
+          foreach ($path in $required) {
+            if (-not (Test-Path $path)) { throw "Required path not found: $path" }
+          }
+          foreach ($exe in @("metaeditor64.exe", "terminal64.exe")) {
+            $candidate = Join-Path $env:MT5_ROOT $exe
+            if (-not (Test-Path $candidate)) { throw "Missing $candidate" }
+          }
+
+      - name: Run locked Stage 1 and Stage 2 pipeline
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
+          $output = Join-Path $PWD "artifacts/runs/run_$stamp"
+          $log = Join-Path $PWD "artifacts/logs/mt5_execution_$stamp.log"
+          New-Item -ItemType Directory -Force -Path (Split-Path $log) | Out-Null
+
+          ./scripts/Run-MT5Pipeline.ps1 `
+            -MetaTraderRoot $env:MT5_ROOT `
+            -RepoRoot $PWD `
+            -CompiledCleanExp1Source $env:EXP1_COMPILED_CLEAN_SOURCE `
+            -ConfigPath "$PWD/research/gatekeeper_rules.json" `
+            -Symbol "EURUSD" `
+            -Period "H1" `
+            -Deposit ([double]"${{ inputs.deposit }}") `
+            -Leverage ([int]"${{ inputs.leverage }}") `
+            -FixedSpreadPoints ([int]"${{ inputs.fixed_spread_points }}") `
+            -OutputDir $output `
+            -LogPath $log
+
+      - name: Upload MT5 Run 1 artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mt5-exp2-run1-${{ github.run_id }}
+          path: |
+            artifacts/runs/**
+            artifacts/logs/**
+          if-no-files-found: error
+          retention-days: 30
