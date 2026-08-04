@@ -27,21 +27,40 @@ SHORT_PATTERN = re.compile(
 )
 
 
+def _looks_like_utf16_without_bom(raw: bytes) -> str | None:
+    sample = raw[:4096]
+    if len(sample) < 4:
+        return None
+
+    even = sample[0::2]
+    odd = sample[1::2]
+    even_nul_ratio = even.count(0) / max(1, len(even))
+    odd_nul_ratio = odd.count(0) / max(1, len(odd))
+
+    if odd_nul_ratio > 0.30 and even_nul_ratio < 0.10:
+        return "utf-16-le"
+    if even_nul_ratio > 0.30 and odd_nul_ratio < 0.10:
+        return "utf-16-be"
+    return None
+
+
 def _read_mql5_source(path: Path) -> tuple[str, str]:
     raw = path.read_bytes()
     if raw.startswith(b"\xef\xbb\xbf"):
         return raw.decode("utf-8-sig"), "utf-8-sig"
     if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
         return raw.decode("utf-16"), "utf-16"
+
+    bomless_utf16 = _looks_like_utf16_without_bom(raw)
+    if bomless_utf16 is not None:
+        return raw.decode(bomless_utf16), bomless_utf16
+
     try:
         return raw.decode("utf-8"), "utf-8"
-    except UnicodeDecodeError:
-        try:
-            return raw.decode("utf-16-le"), "utf-16-le"
-        except UnicodeDecodeError as exc:
-            raise ValueError(
-                f"unsupported source encoding for {path}; expected UTF-8 or UTF-16"
-            ) from exc
+    except UnicodeDecodeError as exc:
+        raise ValueError(
+            f"unsupported source encoding for {path}; expected UTF-8 or UTF-16"
+        ) from exc
 
 
 def _replace_exactly_once(
@@ -67,18 +86,12 @@ def _replace_optional_once(source: str, old: str, new: str) -> str:
 
 def build_confirmed_breakout_exp2(source: str) -> str:
     candidate = source
-
-    # The version directive is metadata, not trading logic. Require exactly one
-    # directive but normalize whatever local formatting/value is present.
     candidate = _replace_exactly_once(
         candidate,
         ANY_VERSION_PATTERN,
         lambda m: f'{m.group(1)}"1.45"{m.group(2)}',
         "MQL5 version directive",
     )
-
-    # These four markers define the actual EXP1 trading hypothesis and remain
-    # strict. The builder refuses to proceed unless all are present exactly once.
     candidate = _replace_exactly_once(
         candidate,
         MAGIC_PATTERN,
