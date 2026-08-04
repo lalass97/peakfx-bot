@@ -18,9 +18,13 @@ TELEMETRY_PATTERN = re.compile(
     r'"peakfx_confirmed_breakout_exp2_events\.csv"(\s*;\s*)$'
 )
 INPUT_ANCHOR = re.compile(r'(?m)^(\s*input\s+int\s+HeartbeatSeconds\s*=\s*300\s*;\s*)$')
-TRIGGER_ANCHOR = re.compile(r'(?m)^bool\s+LongTriggerCondition\s*\(int\s+shift\)')
-ENTRY_ANCHOR = re.compile(r'(?m)^(\s*if\s*\(LongTriggerCondition\(shift\)\)\s*)$')
-SHORT_ENTRY_ANCHOR = re.compile(r'(?m)^(\s*if\s*\(ShortTriggerCondition\(shift\)\)\s*)$')
+LONG_TRIGGER_DECL = re.compile(r'(?m)^bool\s+LongTriggerCondition\s*\(\s*int\s+shift\s*\)')
+LONG_TRIGGER_BODY = re.compile(
+    r'(?m)^(bool\s+LongTriggerCondition\s*\(\s*int\s+shift\s*\)\s*\r?\n\s*\{)'
+)
+SHORT_TRIGGER_BODY = re.compile(
+    r'(?m)^(bool\s+ShortTriggerCondition\s*\(\s*int\s+shift\s*\)\s*\r?\n\s*\{)'
+)
 
 ER_FUNCTION = r'''
 // EXP3A isolated regime filter: Kaufman Efficiency Ratio on closed H1 bars.
@@ -96,19 +100,19 @@ def build_exp3a(source: str) -> str:
         "input insertion anchor",
     )
     candidate = _replace_once(
-        candidate, TRIGGER_ANCHOR,
+        candidate, LONG_TRIGGER_DECL,
         ER_FUNCTION + "bool LongTriggerCondition(int shift)",
-        "trigger insertion anchor",
+        "long trigger declaration",
     )
     candidate = _replace_once(
-        candidate, ENTRY_ANCHOR,
-        lambda m: m.group(1).replace("if(LongTriggerCondition(shift))", "if(EfficiencyGatePasses(shift) && LongTriggerCondition(shift))"),
-        "long entry gate",
+        candidate, LONG_TRIGGER_BODY,
+        lambda m: m.group(1) + "\n   if(!EfficiencyGatePasses(shift))\n      return(false);",
+        "long trigger body",
     )
     candidate = _replace_once(
-        candidate, SHORT_ENTRY_ANCHOR,
-        lambda m: m.group(1).replace("if(ShortTriggerCondition(shift))", "if(EfficiencyGatePasses(shift) && ShortTriggerCondition(shift))"),
-        "short entry gate",
+        candidate, SHORT_TRIGGER_BODY,
+        lambda m: m.group(1) + "\n   if(!EfficiencyGatePasses(shift))\n      return(false);",
+        "short trigger body",
     )
 
     candidate = candidate.replace(
@@ -123,13 +127,14 @@ def build_exp3a(source: str) -> str:
         "EfficiencyPeriod              = 20;",
         "MinimumEfficiencyRatio        = 0.35;",
         "double KaufmanEfficiencyRatio",
-        "EfficiencyGatePasses(shift) && LongTriggerCondition(shift)",
-        "EfficiencyGatePasses(shift) && ShortTriggerCondition(shift)",
+        "if(!EfficiencyGatePasses(shift))",
         "0.20*atr",
     )
     for marker in required:
         if marker not in candidate:
             raise ValueError(f"candidate validation failed: missing {marker}")
+    if candidate.count("if(!EfficiencyGatePasses(shift))") != 2:
+        raise ValueError("candidate validation failed: ER gate must appear exactly twice")
     if str(EXP2_MAGIC) in candidate or EXP2_TELEMETRY in candidate:
         raise ValueError("stale EXP2 identity marker remains")
     return candidate
