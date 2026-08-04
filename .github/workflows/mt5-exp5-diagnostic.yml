@@ -1,0 +1,77 @@
+name: MT5 EXP5 Diagnostic
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_ref:
+        description: Exact branch or commit to validate
+        required: true
+        default: "research/exp5-diagnostic-rejection-telemetry"
+      deposit:
+        description: Test deposit
+        required: true
+        default: "10000"
+      leverage:
+        description: Leverage
+        required: true
+        default: "100"
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUTF8: "1"
+
+jobs:
+  diagnostic:
+    name: Compile and diagnose EXP3A rejection bottlenecks
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 180
+    steps:
+      - name: Checkout exact diagnostic ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_ref }}
+          fetch-depth: 0
+
+      - name: Enable runner script execution
+        shell: cmd
+        run: |
+          reg.exe ADD "HKCU\Software\Microsoft\PowerShell\1\ShellIds\Microsoft.PowerShell" /v ExecutionPolicy /t REG_SZ /d RemoteSigned /f
+
+      - name: Install Python runtime
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify runner environment
+        shell: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "& '{0}'"
+        run: |
+          $ErrorActionPreference = "Stop"
+          foreach ($name in @("MT5_ROOT","EXP1_COMPILED_CLEAN_SOURCE")) {
+            if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) { throw "Runner must define $name" }
+          }
+          foreach ($path in @($env:MT5_ROOT,$env:EXP1_COMPILED_CLEAN_SOURCE,"$env:MT5_ROOT\terminal64.exe","$env:MT5_ROOT\metaeditor64.exe")) {
+            if (-not (Test-Path $path)) { throw "Required path not found: $path" }
+          }
+          python --version
+
+      - name: Run diagnostic-only smoke and fixed 12-month screen
+        shell: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "& '{0}'"
+        run: |
+          $ErrorActionPreference = "Stop"
+          & "$PWD/mt5/run_exp5_diagnostic_validation.ps1" `
+            -MetaTraderRoot $env:MT5_ROOT `
+            -RepoRoot $PWD `
+            -CompiledCleanExp1Source $env:EXP1_COMPILED_CLEAN_SOURCE `
+            -Deposit ([double]"${{ inputs.deposit }}") `
+            -Leverage "1:${{ inputs.leverage }}"
+
+      - name: Upload EXP5 diagnostic artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mt5-exp5-diagnostic-${{ github.run_id }}
+          path: artifacts/mt5-exp5-diagnostic/**
+          if-no-files-found: warn
+          retention-days: 30
