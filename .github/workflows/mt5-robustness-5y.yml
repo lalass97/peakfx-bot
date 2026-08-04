@@ -80,7 +80,23 @@ jobs:
         shell: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "& '{0}'"
         run: |
           $ErrorActionPreference = "Stop"
-          & "$PWD/mt5/run_5y_robustness.ps1" `
+          $runnerScript = "$PWD/mt5/run_5y_robustness.ps1"
+
+          # Repair the older checked-out script's one invalid variable reference.
+          $scriptText = Get-Content -LiteralPath $runnerScript -Raw
+          $scriptText = $scriptText.Replace('$CandidateId: $binary','${CandidateId}: $binary')
+          Set-Content -LiteralPath $runnerScript -Value $scriptText -Encoding UTF8
+
+          # Validate PowerShell syntax before starting any MT5 backtest.
+          $tokens = $null
+          $parseErrors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile($runnerScript,[ref]$tokens,[ref]$parseErrors)
+          if ($parseErrors.Count -gt 0) {
+            $parseErrors | ForEach-Object { Write-Host $_.Message }
+            throw "Five-year robustness script failed PowerShell parser validation."
+          }
+
+          & $runnerScript `
             -MetaTraderRoot $env:MT5_ROOT `
             -RepoRoot $PWD `
             -CompiledCleanExp1Source $env:EXP1_COMPILED_CLEAN_SOURCE `
