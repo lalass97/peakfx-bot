@@ -6,7 +6,7 @@ on:
       target_ref:
         description: Exact branch or commit to validate
         required: true
-        default: "research/confirmed-breakout-exp2-mt5-candidate"
+        default: "research/exp3a-er20-035-mt5-candidate"
       deposit:
         description: Test deposit
         required: true
