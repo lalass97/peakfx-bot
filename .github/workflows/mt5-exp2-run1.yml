@@ -1,0 +1,93 @@
+name: MT5 EXP2 Run 1
+
+on:
+  workflow_dispatch:
+    inputs:
+      fixed_spread_points:
+        description: Recorded spread stress floor in points (not silently assumed enforced)
+        required: true
+        default: "15"
+      deposit:
+        description: Test deposit
+        required: true
+        default: "10000"
+      leverage:
+        description: Leverage, e.g. 100
+        required: true
+        default: "100"
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUTF8: "1"
+
+jobs:
+  run1:
+    name: Compile, smoke, and 12-month screen
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify required runner environment
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ([string]::IsNullOrWhiteSpace($env:MT5_ROOT)) {
+            throw "Runner must define MT5_ROOT."
+          }
+          if ([string]::IsNullOrWhiteSpace($env:EXP1_COMPILED_CLEAN_SOURCE)) {
+            throw "Runner must define EXP1_COMPILED_CLEAN_SOURCE."
+          }
+          if (-not (Test-Path $env:MT5_ROOT -PathType Container)) {
+            throw "MT5_ROOT must be an existing directory: $env:MT5_ROOT"
+          }
+          if (-not (Test-Path $env:EXP1_COMPILED_CLEAN_SOURCE -PathType Leaf)) {
+            throw "EXP1_COMPILED_CLEAN_SOURCE must be an existing source file: $env:EXP1_COMPILED_CLEAN_SOURCE"
+          }
+          if ([System.IO.Path]::GetExtension($env:EXP1_COMPILED_CLEAN_SOURCE) -ne ".mq5") {
+            throw "EXP1_COMPILED_CLEAN_SOURCE must point to the verified .mq5 source, not an .ex5 binary."
+          }
+          foreach ($exe in @("metaeditor64.exe", "terminal64.exe")) {
+            $candidate = Join-Path $env:MT5_ROOT $exe
+            if (-not (Test-Path $candidate -PathType Leaf)) { throw "Missing $candidate" }
+          }
+
+      - name: Run locked Stage 1 and Stage 2 pipeline
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
+          $output = Join-Path $PWD "artifacts/runs/run_$stamp"
+          $log = Join-Path $PWD "artifacts/logs/mt5_execution_$stamp.log"
+          New-Item -ItemType Directory -Force -Path (Split-Path $log) | Out-Null
+
+          ./scripts/Run-MT5Pipeline.ps1 `
+            -MetaTraderRoot $env:MT5_ROOT `
+            -RepoRoot $PWD `
+            -SourceEA $env:EXP1_COMPILED_CLEAN_SOURCE `
+            -ConfigPath "$PWD/research/gatekeeper_rules.json" `
+            -Symbol "EURUSD" `
+            -Period "H1" `
+            -Deposit ([double]"${{ inputs.deposit }}") `
+            -Leverage ([int]"${{ inputs.leverage }}") `
+            -FixedSpreadPoints ([int]"${{ inputs.fixed_spread_points }}") `
+            -OutputDir $output `
+            -LogPath $log
+
+      - name: Upload MT5 Run 1 artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mt5-exp2-run1-${{ github.run_id }}
+          path: |
+            artifacts/runs/**
+            artifacts/logs/**
+            artifacts/mt5-exp2/**
+          if-no-files-found: error
+          retention-days: 30
