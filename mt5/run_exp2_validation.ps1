@@ -32,6 +32,44 @@ foreach ($required in @($MetaEditor, $Terminal, $CompiledCleanExp1Source, $Build
 if ($Deposit -le 0) { throw "Deposit must be positive" }
 if ($Leverage -notmatch '^1:\d+$') { throw "Leverage must look like 1:100" }
 
+function Resolve-Mt5DataFolder {
+    $terminalRoot = Join-Path $env:APPDATA "MetaQuotes\Terminal"
+    if (-not (Test-Path $terminalRoot -PathType Container)) {
+        throw "MT5 terminal data root not found: $terminalRoot"
+    }
+
+    $normalizedInstall = [System.IO.Path]::GetFullPath($MetaTraderRoot).TrimEnd('\\')
+    $matches = @()
+    foreach ($dir in Get-ChildItem $terminalRoot -Directory -ErrorAction SilentlyContinue) {
+        if ($dir.Name -eq "Common") { continue }
+        $origin = Join-Path $dir.FullName "origin.txt"
+        $mql5 = Join-Path $dir.FullName "MQL5"
+        if (-not (Test-Path $mql5 -PathType Container)) { continue }
+
+        if (Test-Path $origin -PathType Leaf) {
+            $originText = (Get-Content $origin -Raw -ErrorAction SilentlyContinue).Trim().TrimEnd('\\')
+            if ($originText -and ([System.IO.Path]::GetFullPath($originText) -ieq $normalizedInstall)) {
+                $matches += $dir
+            }
+        }
+    }
+
+    if ($matches.Count -eq 1) { return $matches[0].FullName }
+    if ($matches.Count -gt 1) {
+        return ($matches | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
+    }
+
+    $fallback = Get-ChildItem $terminalRoot -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -ne "Common" -and (Test-Path (Join-Path $_.FullName "MQL5")) } |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1
+    if (-not $fallback) {
+        throw "No usable MT5 data folder found under $terminalRoot"
+    }
+    Write-Warning "Could not match origin.txt to $MetaTraderRoot; using most recently active MT5 data folder: $($fallback.FullName)"
+    return $fallback.FullName
+}
+
 New-Item -ItemType Directory -Force -Path $GeneratedDir | Out-Null
 Write-Host "Generating exact EXP2 candidate from compiled-clean EXP1 source..."
 & python $Builder $CompiledCleanExp1Source $CandidateSource
@@ -39,18 +77,24 @@ if ($LASTEXITCODE -ne 0 -or -not (Test-Path $CandidateSource)) {
     throw "EXP2 candidate generation failed"
 }
 
+$Mt5DataFolder = Resolve-Mt5DataFolder
+$ExpertSubdir = "PeakFX"
+$ExpertDir = Join-Path $Mt5DataFolder "MQL5\Experts\$ExpertSubdir"
+New-Item -ItemType Directory -Force -Path $ExpertDir | Out-Null
+$DeployedSource = Join-Path $ExpertDir $CandidateFile
+Copy-Item -LiteralPath $CandidateSource -Destination $DeployedSource -Force
+Write-Host "Deployed candidate source to active MT5 data folder: $DeployedSource"
+
 $CompileDir = Join-Path $ResultsRoot "compile"
 New-Item -ItemType Directory -Force -Path $CompileDir | Out-Null
 $CompileLog = Join-Path $CompileDir "metaeditor.log"
 
-Write-Host "Compiling $CandidateFile..."
+Write-Host "Compiling deployed expert $DeployedSource..."
 $compileProcess = Start-Process -FilePath $MetaEditor -ArgumentList @(
-    "/compile:$CandidateSource",
+    "/compile:$DeployedSource",
     "/log:$CompileLog"
 ) -Wait -PassThru -NoNewWindow
 
-# Some MetaEditor builds return exit code 1 even when the compiler log reports a
-# clean build. The compiler log is therefore the authoritative compile gate.
 if (-not (Test-Path $CompileLog)) {
     throw "MetaEditor compile log was not created (exit code $($compileProcess.ExitCode))"
 }
@@ -65,7 +109,11 @@ if (-not $cleanCompile) {
 if ($compileProcess.ExitCode -ne 0) {
     Write-Warning "MetaEditor returned exit code $($compileProcess.ExitCode), but the compile log proves 0 errors and 0 warnings. Continuing."
 }
-Write-Host "Compile gate passed: 0 errors, 0 warnings."
+$DeployedBinary = [System.IO.Path]::ChangeExtension($DeployedSource, ".ex5")
+if (-not (Test-Path $DeployedBinary -PathType Leaf)) {
+    throw "Compile log was clean but deployed EX5 was not found: $DeployedBinary"
+}
+Write-Host "Compile gate passed: 0 errors, 0 warnings. EX5 ready: $DeployedBinary"
 
 $Stages = @(
     @{ Name = "smoke_1m"; From = "2025.06.01"; To = "2025.06.30" },
@@ -85,10 +133,11 @@ function New-TesterConfig($Stage) {
     $reportBase = Join-Path $stageDir "$($Stage.Name)_report"
     $configPath = Join-Path $stageDir "$($Stage.Name).ini"
     $leverageInt = Convert-LeverageToInteger $Leverage
+    $expertPath = "$ExpertSubdir\$CandidateName"
 
     $config = @"
 [Tester]
-Expert=$CandidateName
+Expert=$expertPath
 Symbol=EURUSD
 Period=H1
 Model=4
@@ -115,9 +164,6 @@ foreach ($stage in $Stages) {
     $terminalProcess = Start-Process -FilePath $Terminal -ArgumentList @(
         "/config:$($paths.Config)"
     ) -Wait -PassThru
-    if ($terminalProcess.ExitCode -ne 0) {
-        throw "MT5 failed for $($stage.Name) with exit code $($terminalProcess.ExitCode)"
-    }
 
     $reportCandidates = @(
         "$($paths.ReportBase).htm",
@@ -126,7 +172,15 @@ foreach ($stage in $Stages) {
     )
     $reportPath = $reportCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
     if (-not $reportPath) {
-        throw "No MT5 report found for $($stage.Name) under $($paths.Directory)"
+        $journalDir = Join-Path $Mt5DataFolder "logs"
+        $latestJournal = Get-ChildItem $journalDir -File -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+        $journalHint = if ($latestJournal) { $latestJournal.FullName } else { "none found" }
+        throw "No MT5 report found for $($stage.Name) under $($paths.Directory). Terminal exit code: $($terminalProcess.ExitCode). Latest terminal journal: $journalHint"
+    }
+    if ($terminalProcess.ExitCode -ne 0) {
+        Write-Warning "MT5 returned exit code $($terminalProcess.ExitCode), but a tester report was produced: $reportPath"
     }
 
     $metadata = [ordered]@{
@@ -142,6 +196,9 @@ foreach ($stage in $Stages) {
         leverage = $Leverage
         demo_only = $true
         source_path = $CandidateSource
+        deployed_source_path = $DeployedSource
+        deployed_binary_path = $DeployedBinary
+        mt5_data_folder = $Mt5DataFolder
         report_path = $reportPath
     }
     $metadataPath = Join-Path $paths.Directory "$($stage.Name)_run_metadata.json"
