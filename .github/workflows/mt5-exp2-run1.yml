@@ -46,7 +46,7 @@ jobs:
           cache: pip
 
       - name: Verify required runner environment
-        shell: powershell
+        shell: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "& '{0}'"
         run: |
           $ErrorActionPreference = "Stop"
           if ([string]::IsNullOrWhiteSpace($env:MT5_ROOT)) {
@@ -71,7 +71,7 @@ jobs:
           python --version
 
       - name: Run locked Stage 1 and Stage 2 pipeline
-        shell: powershell
+        shell: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "& '{0}'"
         run: |
           $ErrorActionPreference = "Stop"
           $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
