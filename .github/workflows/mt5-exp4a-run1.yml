@@ -1,0 +1,77 @@
+name: MT5 EXP4A Run 1
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_ref:
+        description: Exact branch or commit to validate
+        required: true
+        default: "research/exp4a-er035-confirm015-mt5-candidate"
+      deposit:
+        description: Test deposit
+        required: true
+        default: "10000"
+      leverage:
+        description: Leverage
+        required: true
+        default: "100"
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUTF8: "1"
+
+jobs:
+  run1:
+    name: Compile, smoke, and fixed 12-month EXP4A screen
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 180
+    steps:
+      - name: Checkout exact validation ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_ref }}
+          fetch-depth: 0
+
+      - name: Enable runner script execution
+        shell: cmd
+        run: |
+          reg.exe ADD "HKCU\Software\Microsoft\PowerShell\1\ShellIds\Microsoft.PowerShell" /v ExecutionPolicy /t REG_SZ /d RemoteSigned /f
+
+      - name: Install Python runtime
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify runner environment
+        shell: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "& '{0}'"
+        run: |
+          $ErrorActionPreference = "Stop"
+          foreach ($name in @("MT5_ROOT","EXP1_COMPILED_CLEAN_SOURCE")) {
+            if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) { throw "Runner must define $name" }
+          }
+          foreach ($path in @($env:MT5_ROOT,$env:EXP1_COMPILED_CLEAN_SOURCE,"$env:MT5_ROOT\terminal64.exe","$env:MT5_ROOT\metaeditor64.exe")) {
+            if (-not (Test-Path $path)) { throw "Required path not found: $path" }
+          }
+          python --version
+
+      - name: Run locked EXP4A Stage 1 and Stage 2 screen
+        shell: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "& '{0}'"
+        run: |
+          $ErrorActionPreference = "Stop"
+          & "$PWD/mt5/run_exp4a_validation.ps1" `
+            -MetaTraderRoot $env:MT5_ROOT `
+            -RepoRoot $PWD `
+            -CompiledCleanExp1Source $env:EXP1_COMPILED_CLEAN_SOURCE `
+            -Deposit ([double]"${{ inputs.deposit }}") `
+            -Leverage "1:${{ inputs.leverage }}"
+
+      - name: Upload EXP4A Run 1 artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mt5-exp4a-run1-${{ github.run_id }}
+          path: artifacts/mt5-exp4a/**
+          if-no-files-found: warn
+          retention-days: 30
