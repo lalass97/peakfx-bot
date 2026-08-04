@@ -57,17 +57,8 @@ jobs:
           if ([string]::IsNullOrWhiteSpace($env:MT5_ROOT)) {
             throw "Runner must define MT5_ROOT."
           }
-          if ([string]::IsNullOrWhiteSpace($env:EXP1_COMPILED_CLEAN_SOURCE)) {
-            throw "Runner must define EXP1_COMPILED_CLEAN_SOURCE."
-          }
           if (-not (Test-Path $env:MT5_ROOT -PathType Container)) {
             throw "MT5_ROOT must be an existing directory: $env:MT5_ROOT"
-          }
-          if (-not (Test-Path $env:EXP1_COMPILED_CLEAN_SOURCE -PathType Leaf)) {
-            throw "EXP1_COMPILED_CLEAN_SOURCE must be an existing source file: $env:EXP1_COMPILED_CLEAN_SOURCE"
-          }
-          if ([System.IO.Path]::GetExtension($env:EXP1_COMPILED_CLEAN_SOURCE) -ne ".mq5") {
-            throw "EXP1_COMPILED_CLEAN_SOURCE must point to the verified .mq5 source, not an .ex5 binary."
           }
           foreach ($exe in @("metaeditor64.exe", "terminal64.exe")) {
             $candidate = Join-Path $env:MT5_ROOT $exe
@@ -75,10 +66,26 @@ jobs:
           }
           python --version
 
+      - name: Resolve exact verified EXP1 source
+        shell: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "& '{0}'"
+        run: |
+          $ErrorActionPreference = "Stop"
+          $explicit = ""
+          if (-not [string]::IsNullOrWhiteSpace($env:EXP1_COMPILED_CLEAN_SOURCE)) {
+            $explicit = $env:EXP1_COMPILED_CLEAN_SOURCE
+          }
+          python "$PWD/research/resolve_exp1_source.py" `
+            --explicit $explicit `
+            --github-env $env:GITHUB_ENV
+          if ($LASTEXITCODE -ne 0) { throw "Unable to resolve a verified EXP1 source." }
+
       - name: Run locked Stage 1 and Stage 2 pipeline
         shell: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "& '{0}'"
         run: |
           $ErrorActionPreference = "Stop"
+          if ([string]::IsNullOrWhiteSpace($env:RESOLVED_EXP1_SOURCE)) {
+            throw "RESOLVED_EXP1_SOURCE was not set by the resolver step."
+          }
           $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
           $output = Join-Path $PWD "artifacts/runs/run_$stamp"
           $log = Join-Path $PWD "artifacts/logs/mt5_execution_$stamp.log"
@@ -87,7 +94,7 @@ jobs:
           & "$PWD/scripts/Run-MT5Pipeline.ps1" `
             -MetaTraderRoot $env:MT5_ROOT `
             -RepoRoot $PWD `
-            -SourceEA $env:EXP1_COMPILED_CLEAN_SOURCE `
+            -SourceEA $env:RESOLVED_EXP1_SOURCE `
             -ConfigPath "$PWD/research/gatekeeper_rules.json" `
             -Symbol "EURUSD" `
             -Period "H1" `
