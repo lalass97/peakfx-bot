@@ -15,8 +15,10 @@ SOURCE_MAGIC = "input long             MagicNumber                  = 26073024;"
 CANDIDATE_MAGIC = "input long             MagicNumber                  = 26073025;"
 SOURCE_TELEMETRY = 'input string           TelemetryFile                = "peakfx_confirmed_breakout_exp1_events.csv";'
 CANDIDATE_TELEMETRY = 'input string           TelemetryFile                = "peakfx_confirmed_breakout_exp2_events.csv";'
-SOURCE_MARGIN = "0.10*atr"
-CANDIDATE_MARGIN = "0.20*atr"
+SOURCE_LONG_CONDITION = "c > g_setup.pullback_high + (0.10*atr)"
+CANDIDATE_LONG_CONDITION = "c > g_setup.pullback_high + (0.20*atr)"
+SOURCE_SHORT_CONDITION = "c < g_setup.pullback_low - (0.10*atr)"
+CANDIDATE_SHORT_CONDITION = "c < g_setup.pullback_low - (0.20*atr)"
 
 
 def _require_exact_count(source: str, marker: str, expected: int = 1) -> None:
@@ -26,16 +28,18 @@ def _require_exact_count(source: str, marker: str, expected: int = 1) -> None:
 
 
 def build_confirmed_breakout_exp2(source: str) -> str:
-    for marker in (
+    source_markers = (
         SOURCE_FILENAME,
         SOURCE_BANNER,
         SOURCE_VERSION,
         SOURCE_DESCRIPTION,
         SOURCE_MAGIC,
         SOURCE_TELEMETRY,
-    ):
+        SOURCE_LONG_CONDITION,
+        SOURCE_SHORT_CONDITION,
+    )
+    for marker in source_markers:
         _require_exact_count(source, marker)
-    _require_exact_count(source, SOURCE_MARGIN, expected=2)
 
     replacements = (
         (SOURCE_FILENAME, CANDIDATE_FILENAME),
@@ -44,35 +48,28 @@ def build_confirmed_breakout_exp2(source: str) -> str:
         (SOURCE_DESCRIPTION, CANDIDATE_DESCRIPTION),
         (SOURCE_MAGIC, CANDIDATE_MAGIC),
         (SOURCE_TELEMETRY, CANDIDATE_TELEMETRY),
-        (SOURCE_MARGIN, CANDIDATE_MARGIN),
+        (SOURCE_LONG_CONDITION, CANDIDATE_LONG_CONDITION),
+        (SOURCE_SHORT_CONDITION, CANDIDATE_SHORT_CONDITION),
     )
 
     candidate = source
     for old, new in replacements:
         candidate = candidate.replace(old, new)
 
-    expected_candidate_markers = (
+    candidate_markers = (
         CANDIDATE_FILENAME,
         CANDIDATE_BANNER,
         CANDIDATE_VERSION,
         CANDIDATE_DESCRIPTION,
         CANDIDATE_MAGIC,
         CANDIDATE_TELEMETRY,
+        CANDIDATE_LONG_CONDITION,
+        CANDIDATE_SHORT_CONDITION,
     )
-    for marker in expected_candidate_markers:
+    for marker in candidate_markers:
         _require_exact_count(candidate, marker)
-    _require_exact_count(candidate, CANDIDATE_MARGIN, expected=2)
 
-    stale_markers = (
-        SOURCE_FILENAME,
-        SOURCE_BANNER,
-        SOURCE_VERSION,
-        SOURCE_DESCRIPTION,
-        SOURCE_MAGIC,
-        SOURCE_TELEMETRY,
-        SOURCE_MARGIN,
-    )
-    for marker in stale_markers:
+    for marker in source_markers:
         if marker in candidate:
             raise ValueError(f"stale source marker remains: {marker}")
 
