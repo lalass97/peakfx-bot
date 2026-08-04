@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 from pathlib import Path
 
 SOURCE_FILENAME = "PeakFX_EURUSD_H1_PULLBACK_CONFIRMED_BREAKOUT_EXP1.mq5"
@@ -19,6 +20,24 @@ SOURCE_LONG_CONDITION = "c > g_setup.pullback_high + (0.10*atr)"
 CANDIDATE_LONG_CONDITION = "c > g_setup.pullback_high + (0.20*atr)"
 SOURCE_SHORT_CONDITION = "c < g_setup.pullback_low - (0.10*atr)"
 CANDIDATE_SHORT_CONDITION = "c < g_setup.pullback_low - (0.20*atr)"
+
+
+def _read_mql5_source(path: Path) -> tuple[str, str]:
+    raw = path.read_bytes()
+    if raw.startswith(b"\xef\xbb\xbf"):
+        return raw.decode("utf-8-sig"), "utf-8-sig"
+    if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return raw.decode("utf-16"), "utf-16"
+    try:
+        return raw.decode("utf-8"), "utf-8"
+    except UnicodeDecodeError:
+        # MetaEditor commonly saves MQL5 files as UTF-16 LE without a BOM.
+        try:
+            return raw.decode("utf-16-le"), "utf-16-le"
+        except UnicodeDecodeError as exc:
+            raise ValueError(
+                f"unsupported source encoding for {path}; expected UTF-8 or UTF-16"
+            ) from exc
 
 
 def _require_exact_count(source: str, marker: str, expected: int = 1) -> None:
@@ -84,10 +103,16 @@ def main(argv: list[str] | None = None) -> int:
 
     source_path = Path(args.source)
     output_path = Path(args.output)
-    source = source_path.read_text(encoding="utf-8")
+    source, detected_encoding = _read_mql5_source(source_path)
+    source_sha256 = hashlib.sha256(source_path.read_bytes()).hexdigest()
+    print(
+        f"EXP2 builder source={source_path} encoding={detected_encoding} "
+        f"sha256={source_sha256}"
+    )
     candidate = build_confirmed_breakout_exp2(source)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(candidate, encoding="utf-8")
+    output_path.write_text(candidate, encoding="utf-8", newline="\n")
+    print(f"EXP2 candidate written: {output_path}")
     return 0
 
 
