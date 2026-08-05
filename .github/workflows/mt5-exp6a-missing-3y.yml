@@ -15,6 +15,10 @@ on:
         description: Leverage, e.g. 100
         required: true
         default: "100"
+  push:
+    branches: [main]
+    paths:
+      - ".github/dispatch/exp6a-missing-3y.trigger"
 
 permissions:
   contents: read
@@ -31,7 +35,7 @@ jobs:
       - name: Checkout exact completion ref
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.target_ref }}
+          ref: ${{ inputs.target_ref || 'research/robustness-5y-exp2-exp3a-exp6a' }}
           fetch-depth: 0
 
       - name: Enable runner script execution
@@ -93,8 +97,8 @@ jobs:
             -MetaTraderRoot $env:MT5_ROOT `
             -RepoRoot $PWD `
             -CompiledCleanExp1Source $env:EXP1_COMPILED_CLEAN_SOURCE `
-            -Deposit ([double]"${{ inputs.deposit }}") `
-            -Leverage "1:${{ inputs.leverage }}"
+            -Deposit ([double]"${{ inputs.deposit || '10000' }}") `
+            -Leverage "1:${{ inputs.leverage || '100' }}"
 
       - name: Upload missing-three-year artifacts
         if: always()
