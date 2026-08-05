@@ -16,15 +16,15 @@ on:
         required: true
         default: "100"
   push:
-    branches: [main]
     paths:
-      - ".github/dispatch/exp6a-missing-3y.trigger"
+      - ".github/trigger-exp6a-missing-3y.txt"
 
 permissions:
   contents: read
 
 env:
   PYTHONUTF8: "1"
+  MT5_ROOT: "C:\\Program Files\\MetaTrader 5"
 
 jobs:
   completion:
@@ -35,7 +35,7 @@ jobs:
       - name: Checkout exact completion ref
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.target_ref || 'research/robustness-5y-exp2-exp3a-exp6a' }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.target_ref || 'research/robustness-5y-exp2-exp3a-exp6a' }}
           fetch-depth: 0
 
       - name: Enable runner script execution
@@ -97,8 +97,8 @@ jobs:
             -MetaTraderRoot $env:MT5_ROOT `
             -RepoRoot $PWD `
             -CompiledCleanExp1Source $env:EXP1_COMPILED_CLEAN_SOURCE `
-            -Deposit ([double]"${{ inputs.deposit || '10000' }}") `
-            -Leverage "1:${{ inputs.leverage || '100' }}"
+            -Deposit ([double]"${{ github.event_name == 'workflow_dispatch' && inputs.deposit || '10000' }}") `
+            -Leverage "1:${{ github.event_name == 'workflow_dispatch' && inputs.leverage || '100' }}"
 
       - name: Upload missing-three-year artifacts
         if: always()
