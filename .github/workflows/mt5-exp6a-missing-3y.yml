@@ -1,0 +1,106 @@
+name: MT5 EXP6A Missing 3 Years
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_ref:
+        description: Exact branch or commit containing the completion runner
+        required: true
+        default: "research/robustness-5y-exp2-exp3a-exp6a"
+      deposit:
+        description: Test deposit
+        required: true
+        default: "10000"
+      leverage:
+        description: Leverage, e.g. 100
+        required: true
+        default: "100"
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUTF8: "1"
+
+jobs:
+  completion:
+    name: Complete the three missing EXP6A yearly tests
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 240
+    steps:
+      - name: Checkout exact completion ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_ref }}
+          fetch-depth: 0
+
+      - name: Enable runner script execution
+        shell: cmd
+        run: |
+          reg.exe ADD "HKCU\Software\Microsoft\PowerShell\1\ShellIds\Microsoft.PowerShell" /v ExecutionPolicy /t REG_SZ /d RemoteSigned /f
+
+      - name: Install Python runtime
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Resolve verified EXP1 source and verify runner environment
+        shell: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "& '{0}'"
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ([string]::IsNullOrWhiteSpace($env:MT5_ROOT)) { throw "Runner must define MT5_ROOT" }
+          foreach ($path in @($env:MT5_ROOT,"$env:MT5_ROOT\terminal64.exe","$env:MT5_ROOT\metaeditor64.exe")) {
+            if (-not (Test-Path $path)) { throw "Required path not found: $path" }
+          }
+
+          $candidates = @()
+          if (-not [string]::IsNullOrWhiteSpace($env:EXP1_COMPILED_CLEAN_SOURCE)) { $candidates += $env:EXP1_COMPILED_CLEAN_SOURCE }
+          $candidates += Get-ChildItem "$env:APPDATA\MetaQuotes\Terminal" -Filter "*.mq5" -File -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
+          $candidates += Get-ChildItem "$env:USERPROFILE\Downloads" -Filter "*.mq5" -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
+          $candidates = $candidates | Where-Object { $_ -and (Test-Path $_ -PathType Leaf) } | Select-Object -Unique
+
+          $resolved = $null
+          foreach ($candidate in $candidates) {
+            $text = Get-Content -LiteralPath $candidate -Raw -ErrorAction SilentlyContinue
+            if ($text -match '26073024' -and
+                $text -match 'peakfx_confirmed_breakout_exp1_events\.csv' -and
+                $text -match '0\.10\s*\*\s*atr' -and
+                $text -match 'pullback_high' -and
+                $text -match 'pullback_low') {
+              $resolved = $candidate
+              break
+            }
+          }
+          if (-not $resolved) { throw "Could not locate the verified compiled-clean EXP1 source." }
+          "EXP1_COMPILED_CLEAN_SOURCE=$resolved" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "Resolved verified EXP1 source: $resolved"
+          python --version
+
+      - name: Run only the three missing EXP6A yearly tests
+        shell: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "& '{0}'"
+        run: |
+          $ErrorActionPreference = "Stop"
+          $runnerScript = "$PWD/mt5/run_exp6a_missing_3y.ps1"
+          $tokens = $null
+          $parseErrors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile($runnerScript,[ref]$tokens,[ref]$parseErrors)
+          if ($parseErrors.Count -gt 0) {
+            $parseErrors | ForEach-Object { Write-Host $_.Message }
+            throw "EXP6A missing-three-year script failed PowerShell parser validation."
+          }
+
+          & $runnerScript `
+            -MetaTraderRoot $env:MT5_ROOT `
+            -RepoRoot $PWD `
+            -CompiledCleanExp1Source $env:EXP1_COMPILED_CLEAN_SOURCE `
+            -Deposit ([double]"${{ inputs.deposit }}") `
+            -Leverage "1:${{ inputs.leverage }}"
+
+      - name: Upload missing-three-year artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mt5-exp6a-missing-3y-${{ github.run_id }}
+          path: artifacts/mt5-exp6a-missing-3y/**
+          if-no-files-found: warn
+          retention-days: 30
