@@ -17,7 +17,7 @@ on:
         default: "100"
   push:
     paths:
-      - ".github/trigger-exp6a-missing-3y.txt"
+      - ".github/dispatch/exp6a-missing-3y.trigger"
 
 permissions:
   contents: read
@@ -52,7 +52,6 @@ jobs:
         shell: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "& '{0}'"
         run: |
           $ErrorActionPreference = "Stop"
-          if ([string]::IsNullOrWhiteSpace($env:MT5_ROOT)) { throw "Runner must define MT5_ROOT" }
           foreach ($path in @($env:MT5_ROOT,"$env:MT5_ROOT\terminal64.exe","$env:MT5_ROOT\metaeditor64.exe")) {
             if (-not (Test-Path $path)) { throw "Required path not found: $path" }
           }
