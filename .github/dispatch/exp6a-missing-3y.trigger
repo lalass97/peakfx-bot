@@ -1,2 +1,2 @@
-triggered_at=2026-08-05T09:11:00-04:00
-purpose=run_only_missing_EXP6A_2022_2023_2023_2024_2024_2025
+Trigger EXP6A missing-three-year completion after reboot-safe workflow fix.
+Timestamp: 2026-08-05T17:40:30Z
