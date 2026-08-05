@@ -24,26 +24,33 @@ if ($Deposit -le 0) { throw "Deposit must be positive" }
 if ($Leverage -notmatch '^1:\d+$') { throw "Leverage must look like 1:100" }
 
 function Stop-StaleMt5Processes {
-    Get-Process terminal64, metatester64 -ErrorAction SilentlyContinue |
-        Stop-Process -Force -ErrorAction SilentlyContinue
+    Get-Process terminal64, metatester64 -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 2
+}
+
+function Find-NewFile {
+    param([string]$FileName,[datetime]$StartedAt,[string[]]$Roots)
+    $matches = @()
+    foreach ($root in ($Roots | Where-Object { $_ -and (Test-Path $_ -PathType Container) } | Select-Object -Unique)) {
+        $matches += Get-ChildItem -LiteralPath $root -File -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -ieq $FileName -and $_.LastWriteTime -ge $StartedAt.AddMinutes(-2) }
+    }
+    return $matches | Sort-Object LastWriteTime -Descending | Select-Object -First 1
 }
 
 function Find-Mt5Report {
     param([string]$ReportStem,[datetime]$StartedAt,[string]$StageDirectory,[string]$Mt5DataFolder)
-    $extensions = @('.htm','.html','.xml')
-    $roots = @($StageDirectory,$Mt5DataFolder,$MetaTraderRoot,(Join-Path $env:APPDATA 'MetaQuotes\Terminal\Common')) |
-        Where-Object { $_ -and (Test-Path $_ -PathType Container) } | Select-Object -Unique
-    $items = @()
-    foreach ($root in $roots) {
-        $items += Get-ChildItem $root -File -Recurse -ErrorAction SilentlyContinue |
+    $roots = @($StageDirectory,$Mt5DataFolder,$MetaTraderRoot,(Join-Path $env:APPDATA 'MetaQuotes\Terminal\Common'))
+    $matches = @()
+    foreach ($root in ($roots | Where-Object { $_ -and (Test-Path $_ -PathType Container) } | Select-Object -Unique)) {
+        $matches += Get-ChildItem -LiteralPath $root -File -Recurse -ErrorAction SilentlyContinue |
             Where-Object {
                 $_.BaseName -eq $ReportStem -and
-                $extensions -contains $_.Extension.ToLowerInvariant() -and
-                $_.LastWriteTime -ge $StartedAt.AddMinutes(-1)
+                @('.htm','.html','.xml') -contains $_.Extension.ToLowerInvariant() -and
+                $_.LastWriteTime -ge $StartedAt.AddMinutes(-2)
             }
     }
-    return $items | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    return $matches | Sort-Object LastWriteTime -Descending | Select-Object -First 1
 }
 
 function Compile-Candidate {
@@ -55,9 +62,7 @@ function Compile-Candidate {
     $process = Start-Process -FilePath $MetaEditor -ArgumentList @("/compile:$deployedSource","/log:$compileLog") -Wait -PassThru
     if (-not (Test-Path $compileLog)) { throw "Compile log missing" }
     $compileText = Get-Content $compileLog -Raw
-    $clean = ($compileText -match '(?i)\b0\s+errors?\s*,\s*0\s+warnings?\b' -or
-              $compileText -match '(?i)\b0\s+error\(s\)\s*,\s*0\s+warning\(s\)\b')
-    if (-not $clean) {
+    if ($compileText -notmatch '(?i)\b0\s+errors?\s*,\s*0\s+warnings?\b' -and $compileText -notmatch '(?i)\b0\s+error\(s\)\s*,\s*0\s+warning\(s\)\b') {
         Get-Content $compileLog | ForEach-Object { Write-Host $_ }
         throw "Compile gate failed for EXP2 diagnostic telemetry"
     }
@@ -69,7 +74,6 @@ function Compile-Candidate {
 New-Item -ItemType Directory -Force -Path $GeneratedDir,$CompileDir | Out-Null
 $baseExp2 = Join-Path $GeneratedDir "PeakFX_EURUSD_H1_PULLBACK_CONFIRMED_BREAKOUT_EXP2.mq5"
 $diagnosticSource = Join-Path $GeneratedDir "PeakFX_EURUSD_H1_PULLBACK_CONFIRMED_BREAKOUT_EXP2_DIAGNOSTIC.mq5"
-
 & python $Exp2Builder $CompiledCleanExp1Source $baseExp2
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path $baseExp2)) { throw "EXP2 generation failed" }
 & python $TelemetryBuilder $baseExp2 $diagnosticSource
@@ -79,13 +83,9 @@ $ExpertsRoot = Split-Path -Parent $CompiledCleanExp1Source
 $Mt5DataFolder = Split-Path -Parent (Split-Path -Parent $ExpertsRoot)
 $ExpertSubdir = "PeakFX"
 $ExpertsDir = Join-Path $ExpertsRoot $ExpertSubdir
-$FilesDir = Join-Path $Mt5DataFolder "MQL5\Files\PeakFX"
-New-Item -ItemType Directory -Force -Path $ExpertsDir,$FilesDir | Out-Null
-
+New-Item -ItemType Directory -Force -Path $ExpertsDir | Out-Null
 $compiled = Compile-Candidate -SourcePath $diagnosticSource -ExpertsDir $ExpertsDir
 $expertName = [System.IO.Path]::GetFileNameWithoutExtension($diagnosticSource)
-$eventFile = Join-Path $FilesDir "peakfx_confirmed_breakout_exp2_events.csv"
-$dealFile = Join-Path $FilesDir "peakfx_exp2_trade_deals.csv"
 
 $windows = @(
     [ordered]@{ id='2020_2021'; from='2020.07.01'; to='2021.06.30' },
@@ -100,8 +100,6 @@ $manifestRuns = @()
 foreach ($window in $windows) {
     $stageDir = Join-Path $ResultsRoot $window.id
     New-Item -ItemType Directory -Force -Path $stageDir | Out-Null
-    Remove-Item -LiteralPath $eventFile,$dealFile -Force -ErrorAction SilentlyContinue
-
     $reportStem = "exp2_diag_$($window.id)_report"
     $configPath = Join-Path $stageDir "$reportStem.ini"
     $config = @"
@@ -128,64 +126,41 @@ Visual=0
     $startedAt = Get-Date
     Write-Host "Running EXP2 diagnostic telemetry $($window.id): $($window.from) to $($window.to)..."
     $terminalProcess = Start-Process -FilePath $Terminal -WorkingDirectory $MetaTraderRoot -ArgumentList @("/config:$configPath") -Wait -PassThru
-    $found = Find-Mt5Report -ReportStem $reportStem -StartedAt $startedAt -StageDirectory $stageDir -Mt5DataFolder $Mt5DataFolder
-    if (-not $found) { throw "No MT5 report found for $($window.id)" }
-    $reportPath = Join-Path $stageDir $found.Name
-    if ($found.FullName -ine $reportPath) { Copy-Item -LiteralPath $found.FullName -Destination $reportPath -Force }
+
+    $report = Find-Mt5Report -ReportStem $reportStem -StartedAt $startedAt -StageDirectory $stageDir -Mt5DataFolder $Mt5DataFolder
+    if (-not $report) { throw "No MT5 report found for $($window.id)" }
+    $reportPath = Join-Path $stageDir $report.Name
+    if ($report.FullName -ine $reportPath) { Copy-Item -LiteralPath $report.FullName -Destination $reportPath -Force }
+
+    $searchRoots = @($Mt5DataFolder,(Join-Path $env:APPDATA 'MetaQuotes\Terminal'),(Join-Path $env:APPDATA 'MetaQuotes\Tester'),(Join-Path $env:APPDATA 'MetaQuotes\Terminal\Common'),$MetaTraderRoot)
+    $event = Find-NewFile -FileName 'peakfx_confirmed_breakout_exp2_events.csv' -StartedAt $startedAt -Roots $searchRoots
+    $deals = Find-NewFile -FileName 'peakfx_exp2_trade_deals.csv' -StartedAt $startedAt -Roots $searchRoots
+    if (-not $event) { throw "Event telemetry missing for $($window.id) in all terminal/tester sandboxes" }
+    if (-not $deals) { throw "Trade-deal telemetry missing for $($window.id) in all terminal/tester sandboxes" }
 
     $eventCopy = Join-Path $stageDir "events.csv"
     $dealCopy = Join-Path $stageDir "trade_deals.csv"
-    if (-not (Test-Path $eventFile -PathType Leaf)) { throw "Event telemetry missing for $($window.id): $eventFile" }
-    if (-not (Test-Path $dealFile -PathType Leaf)) { throw "Trade-deal telemetry missing for $($window.id): $dealFile" }
-    Copy-Item -LiteralPath $eventFile -Destination $eventCopy -Force
-    Copy-Item -LiteralPath $dealFile -Destination $dealCopy -Force
+    Copy-Item -LiteralPath $event.FullName -Destination $eventCopy -Force
+    Copy-Item -LiteralPath $deals.FullName -Destination $dealCopy -Force
+    Write-Host "Captured events from: $($event.FullName)"
+    Write-Host "Captured trade deals from: $($deals.FullName)"
 
     $metadata = [ordered]@{
-        candidate_id='EXP2_DIAGNOSTIC_TELEMETRY'
-        trading_rules_changed=$false
-        logging_only=$true
-        authoritative_parent='EXP2'
-        window_id=$window.id
-        symbol='EURUSD'
-        timeframe='H1'
-        modeling='every_tick_based_on_real_ticks'
-        start_date=$window.from.Replace('.','-')
-        end_date=$window.to.Replace('.','-')
-        deposit=$Deposit
-        currency='USD'
-        leverage=$Leverage
-        demo_only=$true
-        oos_locked=$true
-        source_path=$diagnosticSource
-        deployed_source_path=$compiled.source
-        deployed_binary_path=$compiled.binary
-        compile_log=$compiled.compile_log
-        report_path=$reportPath
-        events_path=$eventCopy
-        trade_deals_path=$dealCopy
-        terminal_exit_code=$terminalProcess.ExitCode
+        candidate_id='EXP2_DIAGNOSTIC_TELEMETRY'; trading_rules_changed=$false; logging_only=$true; authoritative_parent='EXP2'
+        window_id=$window.id; symbol='EURUSD'; timeframe='H1'; modeling='every_tick_based_on_real_ticks'
+        start_date=$window.from.Replace('.','-'); end_date=$window.to.Replace('.','-'); deposit=$Deposit; currency='USD'; leverage=$Leverage
+        demo_only=$true; oos_locked=$true; source_path=$diagnosticSource; deployed_source_path=$compiled.source; deployed_binary_path=$compiled.binary
+        compile_log=$compiled.compile_log; report_path=$reportPath; events_path=$eventCopy; trade_deals_path=$dealCopy; terminal_exit_code=$terminalProcess.ExitCode
     }
     $metadata | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $stageDir "run_metadata.json") -Encoding UTF8
     $manifestRuns += $metadata
 }
 
 $manifest = [ordered]@{
-    protocol='PeakFX EXP2 five-year diagnostic telemetry'
-    purpose='logging-only trade-level diagnosis before any EXP7 rule change'
-    authoritative_parent='EXP2'
-    trading_rules_changed=$false
-    windows=$windows
-    symbol='EURUSD'
-    timeframe='H1'
-    modeling='every_tick_based_on_real_ticks'
-    deposit=$Deposit
-    currency='USD'
-    leverage=$Leverage
-    demo_only=$true
-    oos_locked=$true
-    reserved_oos_not_tested=$true
-    generated_at=(Get-Date).ToString('o')
-    runs=$manifestRuns
+    protocol='PeakFX EXP2 five-year diagnostic telemetry'; purpose='logging-only trade-level diagnosis before any EXP7 rule change'
+    authoritative_parent='EXP2'; trading_rules_changed=$false; windows=$windows; symbol='EURUSD'; timeframe='H1'
+    modeling='every_tick_based_on_real_ticks'; deposit=$Deposit; currency='USD'; leverage=$Leverage
+    demo_only=$true; oos_locked=$true; reserved_oos_not_tested=$true; generated_at=(Get-Date).ToString('o'); runs=$manifestRuns
 }
 $manifest | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $ResultsRoot 'diagnostic_manifest.json') -Encoding UTF8
 Write-Host "EXP2 five-year diagnostic telemetry completed. No trading rules changed. OOS remains locked."
