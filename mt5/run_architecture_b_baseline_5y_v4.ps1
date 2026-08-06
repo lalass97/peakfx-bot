@@ -48,13 +48,19 @@ $newDiscovery=@'
 if($text-notlike "*$oldDiscovery*"){throw 'Expected report discovery block not found'}
 $text=$text.Replace($oldDiscovery,$newDiscovery)
 
-# MT5 formats thousands with spaces (for example 10 000.00). The old
-# expression captured only the first group (10), so normalize the complete
-# numeric field before parsing.
-$oldReadNumber="return [double]::Parse((`$m.Groups[1].Value-replace',',''),[Globalization.CultureInfo]::InvariantCulture)"
-$newReadNumber="`$normalized=`$m.Groups[1].Value-replace'[^0-9.\-]',''; return [double]::Parse(`$normalized,[Globalization.CultureInfo]::InvariantCulture)"
-if($text-notlike "*$oldReadNumber*"){throw 'Expected numeric parser line not found'}
-$text=$text.Replace($oldReadNumber,$newReadNumber)
+# Replace the complete Read-Number function rather than matching one fragile line.
+$readNumberPattern='(?s)function Read-Number\(\[string\]\$Text,\[string\]\$Pattern,\[string\]\$Label\)\{.*?\n\}'
+$readNumberReplacement=@'
+function Read-Number([string]$Text,[string]$Pattern,[string]$Label){
+  $m=[regex]::Match($Text,$Pattern,[Text.RegularExpressions.RegexOptions]::IgnoreCase)
+  if(-not$m.Success){throw "Report field missing: $Label"}
+  $normalized=$m.Groups[1].Value-replace'[^0-9.\-]',''
+  return [double]::Parse($normalized,[Globalization.CultureInfo]::InvariantCulture)
+}
+'@
+$updated=[regex]::Replace($text,$readNumberPattern,$readNumberReplacement,1)
+if($updated-eq$text){throw 'Read-Number function replacement failed'}
+$text=$updated
 $text=$text.Replace('[0-9,]+(?:\.[0-9]+)?','[0-9\s,\u00A0\u202F]+(?:\.[0-9]+)?')
 $text=$text.Replace('[0-9,]+','[0-9\s,\u00A0\u202F]+')
 
