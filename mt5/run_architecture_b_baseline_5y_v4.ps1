@@ -64,6 +64,14 @@ $text=$updated
 $text=$text.Replace('[0-9,]+(?:\.[0-9]+)?','[0-9\s,\u00A0\u202F]+(?:\.[0-9]+)?')
 $text=$text.Replace('[0-9,]+','[0-9\s,\u00A0\u202F]+')
 
+# MT5 can report Symbols=0 when a valid real-tick test has no trades. Bars and
+# ticks prove historical execution; a zero-trade window is a legitimate frozen
+# strategy result and must not be rejected.
+$oldExecutionGate='if($bars-le0 -or $ticks-le0 -or $symbols-le0){throw "$Cell empty execution: bars=$bars ticks=$ticks symbols=$symbols"}'
+$newExecutionGate='if($bars-le0 -or $ticks-le0){throw "$Cell empty execution: bars=$bars ticks=$ticks symbols=$symbols"}'
+if($text-notlike "*$oldExecutionGate*"){throw 'Expected execution gate not found'}
+$text=$text.Replace($oldExecutionGate,$newExecutionGate)
+
 Set-Content $patchedRunner $text -Encoding UTF8
 & $patchedRunner -MetaTraderRoot $MetaTraderRoot -RepoRoot $RepoRoot -Deposit $Deposit -Leverage $Leverage
 if($LASTEXITCODE-ne0){exit $LASTEXITCODE}
