@@ -9,12 +9,14 @@ Set-StrictMode -Version Latest
 
 $results=Join-Path $RepoRoot 'artifacts/architecture-b-baseline-5y'
 $compileDir=Join-Path $results 'compile'
+$frozenDir=Join-Path $results 'frozen_inputs'
 $source=Join-Path $RepoRoot 'mt5/PeakFX_EURUSD_ARCH_B_VOLATILITY_EXPANSION.mq5'
 $spec=Join-Path $RepoRoot 'docs/ARCHITECTURE_B_FROZEN_BASELINE_SPEC.md'
+$verifier=Join-Path $RepoRoot 'scripts/verify_architecture_b_artifact.py'
 $metaEditor=Join-Path $MetaTraderRoot 'metaeditor64.exe'
 $terminal=Join-Path $MetaTraderRoot 'terminal64.exe'
-foreach($p in @($source,$spec,$metaEditor,$terminal)){if(-not(Test-Path $p)){throw "Required path missing: $p"}}
-New-Item -ItemType Directory -Force -Path $results,$compileDir|Out-Null
+foreach($p in @($source,$spec,$verifier,$metaEditor,$terminal)){if(-not(Test-Path $p)){throw "Required path missing: $p"}}
+New-Item -ItemType Directory -Force -Path $results,$compileDir,$frozenDir|Out-Null
 
 $terminalRoots=Get-ChildItem "$env:APPDATA\MetaQuotes\Terminal" -Directory -ErrorAction SilentlyContinue
 $dataRoot=$null
@@ -39,7 +41,10 @@ if(-not(Test-Path $binary)){throw 'Compiled binary missing'}
 $sourceHash=(Get-FileHash $source -Algorithm SHA256).Hash.ToLowerInvariant()
 $binaryHash=(Get-FileHash $binary -Algorithm SHA256).Hash.ToLowerInvariant()
 $specHash=(Get-FileHash $spec -Algorithm SHA256).Hash.ToLowerInvariant()
-Copy-Item $spec (Join-Path $results 'ARCHITECTURE_B_FROZEN_BASELINE_SPEC.md') -Force
+Copy-Item $source (Join-Path $frozenDir ([IO.Path]::GetFileName($source))) -Force
+Copy-Item $binary (Join-Path $frozenDir ([IO.Path]::GetFileName($binary))) -Force
+Copy-Item $spec (Join-Path $frozenDir ([IO.Path]::GetFileName($spec))) -Force
+Copy-Item $verifier (Join-Path $frozenDir ([IO.Path]::GetFileName($verifier))) -Force
 
 function Stop-Mt5{
   Get-Process terminal64,metatester64 -ErrorAction SilentlyContinue|Stop-Process -Force -ErrorAction SilentlyContinue
@@ -104,6 +109,7 @@ foreach($cfg in $configs){
   $setText=($setLines -join "`r`n")+"`r`n"
   Set-Content $setPath $setText -Encoding Unicode
   $setHash=(Get-FileHash $setPath -Algorithm SHA256).Hash.ToLowerInvariant()
+  Copy-Item $setPath (Join-Path $frozenDir $setName) -Force
 
   foreach($w in $windows){
     $stage=Join-Path $results "$($cfg.id)\$($w.id)"
@@ -126,7 +132,7 @@ foreach($cfg in $configs){
       architecture='B'; configuration=$cfg.id; expansion_multiplier=[double]$cfg.exp
       fast_fail_exit=[bool]::Parse($cfg.fast); tick_volume_revision=$false
       parameter_set=$setName; parameter_set_sha256=$setHash
-      frozen_spec_sha256=$specHash; window=$w.id; start=$w.from; end=$w.to
+      spec_sha256=$specHash; window=$w.id; start=$w.from; end=$w.to
       symbol='EURUSD'; timeframe='H1'; model='real_ticks'; deposit=$Deposit; leverage=$Leverage
       source_sha256=$sourceHash; binary_sha256=$binaryHash; report=$dest; report_sha256=$reportHash
       terminal_exit_code=$tp.ExitCode; oos_locked=$true
@@ -138,7 +144,7 @@ foreach($cfg in $configs){
 if($runs.Count-ne$expectedRuns){throw "Run count mismatch: expected $expectedRuns, produced $($runs.Count)"}
 $manifest=[ordered]@{
   protocol='Architecture B frozen baseline'; expected_run_count=$expectedRuns; completed_run_count=$runs.Count
-  source_sha256=$sourceHash; binary_sha256=$binaryHash; frozen_spec_sha256=$specHash
+  source_sha256=$sourceHash; binary_sha256=$binaryHash; spec_sha256=$specHash
   compile_log=$compileLog; compile_exit_code=$cp.ExitCode
   parameter_loading='Explicit frozen MT5 .set files in MQL5/Profiles/Tester'
   configurations=$configs; windows=$windows; runs=$runs
