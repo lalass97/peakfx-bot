@@ -16,6 +16,7 @@ on:
   push:
     paths:
       - ".github/dispatch/architecture-a-r1.trigger"
+      - ".github/workflows/mt5-architecture-a-r1-5y.yml"
 
 permissions:
   contents: read
