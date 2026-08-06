@@ -48,14 +48,14 @@ jobs:
             $env:MT5_ROOT,
             "$env:MT5_ROOT\terminal64.exe",
             "$env:MT5_ROOT\metaeditor64.exe",
-            "$PWD\mt5\run_architecture_b_baseline_5y.ps1",
+            "$PWD\mt5\run_architecture_b_baseline_5y_v2.ps1",
             "$PWD\mt5\PeakFX_EURUSD_ARCH_B_VOLATILITY_EXPANSION.mq5",
             "$PWD\docs\ARCHITECTURE_B_FROZEN_BASELINE_SPEC.md",
             "$PWD\scripts\verify_architecture_b_artifact.py"
           )
           foreach($p in $required){if(-not(Test-Path $p)){throw "Required path missing: $p"}}
           $tokens=$null;$errors=$null
-          [void][System.Management.Automation.Language.Parser]::ParseFile("$PWD\mt5\run_architecture_b_baseline_5y.ps1",[ref]$tokens,[ref]$errors)
+          [void][System.Management.Automation.Language.Parser]::ParseFile("$PWD\mt5\run_architecture_b_baseline_5y_v2.ps1",[ref]$tokens,[ref]$errors)
           if($errors.Count -gt 0){$errors|ForEach-Object{Write-Host $_.Message};throw 'Runner parser validation failed'}
           python -m py_compile "$PWD\scripts\verify_architecture_b_artifact.py"
           if($LASTEXITCODE-ne0){throw 'Artifact verifier syntax validation failed'}
@@ -63,7 +63,7 @@ jobs:
       - name: Run Architecture B frozen baseline matrix
         shell: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "& '{0}'"
         run: |
-          & "$PWD\mt5\run_architecture_b_baseline_5y.ps1" `
+          & "$PWD\mt5\run_architecture_b_baseline_5y_v2.ps1" `
             -MetaTraderRoot $env:MT5_ROOT `
             -RepoRoot $PWD `
             -Deposit ([double]"${{ github.event_name == 'workflow_dispatch' && inputs.deposit || '10000' }}") `
