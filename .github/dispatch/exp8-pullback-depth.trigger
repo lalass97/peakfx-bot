@@ -1,4 +1,4 @@
 EXP8 frozen pullback depth 0.50 ATR
-Triggered: 2026-08-06T04:03:00Z
+Triggered: 2026-08-06T04:07:00Z
 OOS locked: true
-Infrastructure retry: restore EXP2 builder
+Infrastructure retry: fix exact EXP2 pullback function transformation
