@@ -27,10 +27,15 @@ env:
   MT5_ROOT: "C:\\Program Files\\MetaTrader 5"
 
 jobs:
-  exp8:
-    name: Run frozen EXP8 across five annual windows
+  exp8_window:
+    name: EXP8 ${{ matrix.window }}
     runs-on: [self-hosted, Windows, X64]
-    timeout-minutes: 300
+    timeout-minutes: 130
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        window: [2020_2021, 2021_2022, 2022_2023, 2023_2024, 2024_2025]
     steps:
       - name: Checkout exact EXP8 ref
         uses: actions/checkout@v4
@@ -48,10 +53,6 @@ jobs:
           }
           if (-not (Test-Path $builder)) { throw "EXP2 builder restore failed" }
 
-      - name: Enable PowerShell scripts
-        shell: cmd
-        run: reg.exe ADD "HKCU\Software\Microsoft\PowerShell\1\ShellIds\Microsoft.PowerShell" /v ExecutionPolicy /t REG_SZ /d RemoteSigned /f
-
       - name: Install Python
         uses: actions/setup-python@v5
         with:
@@ -64,43 +65,39 @@ jobs:
           foreach ($path in @($env:MT5_ROOT,"$env:MT5_ROOT\terminal64.exe","$env:MT5_ROOT\metaeditor64.exe")) {
             if (-not (Test-Path $path)) { throw "Required path not found: $path" }
           }
-          $candidates = @()
-          if (-not [string]::IsNullOrWhiteSpace($env:EXP1_COMPILED_CLEAN_SOURCE)) { $candidates += $env:EXP1_COMPILED_CLEAN_SOURCE }
-          $candidates += Get-ChildItem "$env:APPDATA\MetaQuotes\Terminal" -Filter "*.mq5" -File -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
+          $candidates = Get-ChildItem "$env:APPDATA\MetaQuotes\Terminal" -Filter "*.mq5" -File -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
           $candidates += Get-ChildItem "$env:USERPROFILE\Downloads" -Filter "*.mq5" -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
-          $candidates = $candidates | Where-Object { $_ -and (Test-Path $_ -PathType Leaf) } | Select-Object -Unique
           $resolved = $null
-          foreach ($candidate in $candidates) {
+          foreach ($candidate in ($candidates | Select-Object -Unique)) {
             $text = Get-Content -LiteralPath $candidate -Raw -ErrorAction SilentlyContinue
-            if ($text -match '26073024' -and $text -match 'peakfx_confirmed_breakout_exp1_events\.csv' -and $text -match '0\.10\s*\*\s*atr' -and $text -match 'pullback_high' -and $text -match 'pullback_low') {
-              $resolved = $candidate
-              break
-            }
+            if ($text -match '26073024' -and $text -match 'peakfx_confirmed_breakout_exp1_events\.csv' -and $text -match '0\.10\s*\*\s*atr' -and $text -match 'pullback_high' -and $text -match 'pullback_low') { $resolved = $candidate; break }
           }
           if (-not $resolved) { throw "Could not locate verified EXP1 source." }
           "EXP1_COMPILED_CLEAN_SOURCE=$resolved" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           Write-Host "Resolved EXP1: $resolved"
 
-      - name: Validate and run EXP8
+      - name: Run frozen EXP8 annual window
         shell: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "& '{0}'"
         run: |
           $ErrorActionPreference = "Stop"
-          $script = "$PWD/mt5/run_exp8_pullback_depth_5y.ps1"
+          $script = "$PWD/mt5/run_exp8_pullback_depth_window.ps1"
           $tokens=$null; $errors=$null
           [void][System.Management.Automation.Language.Parser]::ParseFile($script,[ref]$tokens,[ref]$errors)
-          if ($errors.Count -gt 0) { $errors | ForEach-Object { Write-Host $_.Message }; throw "EXP8 runner parser validation failed" }
+          if ($errors.Count -gt 0) { $errors | ForEach-Object { Write-Host $_.Message }; throw "EXP8 window runner parser validation failed" }
           & $script `
             -MetaTraderRoot $env:MT5_ROOT `
             -RepoRoot $PWD `
             -CompiledCleanExp1Source $env:EXP1_COMPILED_CLEAN_SOURCE `
+            -WindowId "${{ matrix.window }}" `
             -Deposit ([double]"${{ github.event_name == 'workflow_dispatch' && inputs.deposit || '10000' }}") `
-            -Leverage "1:${{ github.event_name == 'workflow_dispatch' && inputs.leverage || '100' }}"
+            -Leverage "1:${{ github.event_name == 'workflow_dispatch' && inputs.leverage || '100' }}" `
+            -WindowTimeoutMinutes 100
 
-      - name: Upload EXP8 artifacts
+      - name: Upload annual EXP8 artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: mt5-exp8-pullback-depth-5y-${{ github.run_id }}
-          path: artifacts/mt5-exp8-pullback-depth-5y/**
+          name: mt5-exp8-${{ matrix.window }}-${{ github.run_id }}
+          path: artifacts/mt5-exp8-pullback-depth-${{ matrix.window }}/**
           if-no-files-found: warn
           retention-days: 30
