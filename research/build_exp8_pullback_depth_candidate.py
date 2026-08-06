@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import re
-import sys
 from pathlib import Path
 
 THRESHOLD = "0.50"
@@ -16,49 +15,89 @@ def read_text(path: Path) -> str:
     if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
         return raw.decode("utf-16")
     sample = raw[:4096]
-    if sample and sample[1::2].count(0) / max(1, len(sample)//2) > 0.2:
+    if sample and sample[1::2].count(0) / max(1, len(sample) // 2) > 0.2:
         return raw.decode("utf-16-le")
     return raw.decode("utf-8")
 
 
-def replace_once(text: str, pattern: str, replacement: str, label: str) -> str:
-    matches = list(re.finditer(pattern, text, flags=re.MULTILINE))
+def replace_function_body(source: str, name: str, old_body: str, new_body: str) -> str:
+    pattern = re.compile(
+        rf"bool\s+{re.escape(name)}\s*\(int\s+shift\)\s*\{{(?P<body>.*?)\n\s*\}}",
+        flags=re.DOTALL,
+    )
+    matches = list(pattern.finditer(source))
     if len(matches) != 1:
-        raise ValueError(f"expected exactly one {label}, found {len(matches)}")
-    return re.sub(pattern, replacement, text, count=1, flags=re.MULTILINE)
+        raise ValueError(f"expected exactly one {name} function, found {len(matches)}")
+    body = matches[0].group("body")
+    if body.strip() != old_body.strip():
+        raise ValueError(f"unexpected {name} body; refusing non-isolated edit")
+    replacement = f"bool {name}(int shift)\n  {{\n{new_body}\n  }}"
+    return source[: matches[0].start()] + replacement + source[matches[0].end() :]
 
 
 def build(source: str) -> str:
     candidate = source
 
-    # Metadata-only changes.
-    candidate = re.sub(r'(?m)^(\s*#property\s+version\s+)"[^"]+"', r'\1"1.50"', candidate, count=1)
-    candidate = candidate.replace("PeakFX_EURUSD_H1_PULLBACK_CONFIRMED_BREAKOUT_EXP2.mq5", "PeakFX_EURUSD_H1_PULLBACK_CONFIRMED_BREAKOUT_EXP8_PULLBACK_DEPTH.mq5")
-    candidate = candidate.replace("peakfx_confirmed_breakout_exp2_events.csv", "peakfx_exp8_pullback_depth_events.csv")
+    candidate = re.sub(
+        r'(?m)^(\s*#property\s+version\s+)"[^"]+"',
+        r'\1"1.50"',
+        candidate,
+        count=1,
+    )
+    candidate = candidate.replace(
+        "PeakFX_EURUSD_H1_PULLBACK_CONFIRMED_BREAKOUT_EXP2.mq5",
+        "PeakFX_EURUSD_H1_PULLBACK_CONFIRMED_BREAKOUT_EXP8_PULLBACK_DEPTH.mq5",
+    )
+    candidate = candidate.replace(
+        "peakfx_confirmed_breakout_exp2_events.csv",
+        "peakfx_exp8_pullback_depth_events.csv",
+    )
     candidate = candidate.replace("26073025", "26073031", 1)
 
-    # Single isolated hypothesis: redefine a valid pullback candle by requiring
-    # wick intrusion of at least 0.50 ATR beyond EMA12. Because the same pullback
-    # functions are reused for initial and replacement pullbacks, this criterion
-    # intentionally governs both call sites.
-    long_pat = r'(?m)^(\s*return\s+[^;]*c\s*<=\s*ema12[^;]*;\s*)$'
-    short_pat = r'(?m)^(\s*return\s+[^;]*c\s*>=\s*ema12[^;]*;\s*)$'
+    old_long = """   if(!UptrendCondition(shift))
+      return(false);
+   double f = GetIndicatorValue(hEmaFast,shift);
+   double s = GetIndicatorValue(hEmaSlow,shift);
+   double c = iClose(InpSymbol,InpTimeframe,shift);
+   return(c <= f && c >= s);"""
+    new_long = f"""   if(!UptrendCondition(shift))
+      return(false);
+   double f = GetIndicatorValue(hEmaFast,shift);
+   double s = GetIndicatorValue(hEmaSlow,shift);
+   double atr = GetIndicatorValue(hAtr,shift);
+   double c = iClose(InpSymbol,InpTimeframe,shift);
+   double l = iLow(InpSymbol,InpTimeframe,shift);
+   if(!IsValidValue(atr) || atr <= 0.0)
+      return(false);
+   return(c <= f && c >= s && ((f-l)/atr >= {THRESHOLD}));"""
 
-    long_matches = list(re.finditer(long_pat, candidate))
-    short_matches = list(re.finditer(short_pat, candidate))
-    if len(long_matches) != 1 or len(short_matches) != 1:
-        raise ValueError(f"pullback return markers not unique: long={len(long_matches)} short={len(short_matches)}")
+    old_short = """   if(!DowntrendCondition(shift))
+      return(false);
+   double f = GetIndicatorValue(hEmaFast,shift);
+   double s = GetIndicatorValue(hEmaSlow,shift);
+   double c = iClose(InpSymbol,InpTimeframe,shift);
+   return(c >= f && c <= s);"""
+    new_short = f"""   if(!DowntrendCondition(shift))
+      return(false);
+   double f = GetIndicatorValue(hEmaFast,shift);
+   double s = GetIndicatorValue(hEmaSlow,shift);
+   double atr = GetIndicatorValue(hAtr,shift);
+   double c = iClose(InpSymbol,InpTimeframe,shift);
+   double h = iHigh(InpSymbol,InpTimeframe,shift);
+   if(!IsValidValue(atr) || atr <= 0.0)
+      return(false);
+   return(c >= f && c <= s && ((h-f)/atr >= {THRESHOLD}));"""
 
-    long_line = long_matches[0].group(1)
-    short_line = short_matches[0].group(1)
-    long_expr = long_line.rstrip().rstrip(';') + f" && ((ema12-l)/atr >= {THRESHOLD});"
-    short_expr = short_line.rstrip().rstrip(';') + f" && ((h-ema12)/atr >= {THRESHOLD});"
-    candidate = candidate.replace(long_line, long_expr, 1)
-    candidate = candidate.replace(short_line, short_expr, 1)
+    candidate = replace_function_body(
+        candidate, "LongPullbackCondition", old_long, new_long
+    )
+    candidate = replace_function_body(
+        candidate, "ShortPullbackCondition", old_short, new_short
+    )
 
     required = [
-        f"((ema12-l)/atr >= {THRESHOLD})",
-        f"((h-ema12)/atr >= {THRESHOLD})",
+        f"((f-l)/atr >= {THRESHOLD})",
+        f"((h-f)/atr >= {THRESHOLD})",
         "peakfx_exp8_pullback_depth_events.csv",
         "26073031",
     ]
@@ -69,10 +108,10 @@ def build(source: str) -> str:
 
 
 def main() -> int:
-    p = argparse.ArgumentParser()
-    p.add_argument("source")
-    p.add_argument("output")
-    args = p.parse_args()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("source")
+    parser.add_argument("output")
+    args = parser.parse_args()
     try:
         src_path = Path(args.source)
         out_path = Path(args.output)
