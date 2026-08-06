@@ -48,6 +48,16 @@ $newDiscovery=@'
 if($text-notlike "*$oldDiscovery*"){throw 'Expected report discovery block not found'}
 $text=$text.Replace($oldDiscovery,$newDiscovery)
 
+# MT5 formats thousands with spaces (for example 10 000.00). The old
+# expression captured only the first group (10), so normalize the complete
+# numeric field before parsing.
+$oldReadNumber="return [double]::Parse((`$m.Groups[1].Value-replace',',''),[Globalization.CultureInfo]::InvariantCulture)"
+$newReadNumber="`$normalized=`$m.Groups[1].Value-replace'[^0-9.\-]',''; return [double]::Parse(`$normalized,[Globalization.CultureInfo]::InvariantCulture)"
+if($text-notlike "*$oldReadNumber*"){throw 'Expected numeric parser line not found'}
+$text=$text.Replace($oldReadNumber,$newReadNumber)
+$text=$text.Replace('[0-9,]+(?:\.[0-9]+)?','[0-9\s,\u00A0\u202F]+(?:\.[0-9]+)?')
+$text=$text.Replace('[0-9,]+','[0-9\s,\u00A0\u202F]+')
+
 Set-Content $patchedRunner $text -Encoding UTF8
 & $patchedRunner -MetaTraderRoot $MetaTraderRoot -RepoRoot $RepoRoot -Deposit $Deposit -Leverage $Leverage
 if($LASTEXITCODE-ne0){exit $LASTEXITCODE}
