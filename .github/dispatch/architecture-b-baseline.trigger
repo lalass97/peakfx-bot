@@ -1,5 +1,5 @@
 Architecture B frozen baseline rerun
-Triggered: 2026-08-06T22:12:00Z
+Triggered: 2026-08-06T22:16:00Z
 Target ref: research/architecture-b-volatility-regime
 EA commit: 5b5d92c3bb45017b931681ac7f365c08bf343f65
 Execution-integrity runner commit: 6bdea00145d771e1c039336cf29393a06c787182
@@ -14,3 +14,4 @@ Require exact terminal data root: true
 Capture MT5 logs: true
 Revision enabled: false
 OOS locked: true
+Run request: user-confirmed
