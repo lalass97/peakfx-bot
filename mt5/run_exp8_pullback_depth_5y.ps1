@@ -46,8 +46,13 @@ $binary=[IO.Path]::ChangeExtension($deployed,'.ex5')
 if(-not(Test-Path $binary)){throw 'EXP8 binary missing'}
 
 $diffPath=Join-Path $ResultsRoot 'exp2_to_exp8.diff.txt'
-& git diff --no-index -- $exp2 $exp8 2>$null | Set-Content $diffPath -Encoding UTF8
-if($LASTEXITCODE -gt 1){throw 'Diff generation failed'}
+$oldNative=$PSNativeCommandUseErrorActionPreference
+$PSNativeCommandUseErrorActionPreference=$false
+$diffOutput=& git -c core.autocrlf=false diff --no-index --no-textconv -- $exp2 $exp8 2>$null
+$diffExit=$LASTEXITCODE
+$PSNativeCommandUseErrorActionPreference=$oldNative
+$diffOutput | Set-Content $diffPath -Encoding UTF8
+if($diffExit -gt 1){throw "Diff generation failed with exit code $diffExit"}
 
 function Stop-Mt5 { Get-Process terminal64,metatester64 -ErrorAction SilentlyContinue|Stop-Process -Force -ErrorAction SilentlyContinue;Start-Sleep 2 }
 function Find-Report([string]$stem,[datetime]$started,[string]$stage){
