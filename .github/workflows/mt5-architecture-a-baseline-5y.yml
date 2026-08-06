@@ -1,0 +1,69 @@
+name: MT5 Architecture A Baseline 5Y
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_ref:
+        description: Exact branch or commit containing Architecture A
+        required: true
+        default: "research/architecture-a-session-breakout"
+      deposit:
+        required: true
+        default: "10000"
+      leverage:
+        required: true
+        default: "100"
+  push:
+    paths:
+      - ".github/dispatch/architecture-a-baseline.trigger"
+
+permissions:
+  contents: read
+
+env:
+  MT5_ROOT: "C:\\Program Files\\MetaTrader 5"
+
+jobs:
+  baseline:
+    name: Run frozen Architecture A baseline matrix
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 600
+    steps:
+      - name: Checkout exact Architecture A ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.target_ref || 'research/architecture-a-session-breakout' }}
+          fetch-depth: 0
+
+      - name: Enable PowerShell scripts
+        shell: cmd
+        run: reg.exe ADD "HKCU\Software\Microsoft\PowerShell\1\ShellIds\Microsoft.PowerShell" /v ExecutionPolicy /t REG_SZ /d RemoteSigned /f
+
+      - name: Validate environment and runner
+        shell: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "& '{0}'"
+        run: |
+          $ErrorActionPreference='Stop'
+          foreach($p in @($env:MT5_ROOT,"$env:MT5_ROOT\terminal64.exe","$env:MT5_ROOT\metaeditor64.exe","$PWD\mt5\run_architecture_a_baseline_5y.ps1","$PWD\mt5\PeakFX_EURUSD_ARCH_A_SESSION_BREAKOUT.mq5")){
+            if(-not(Test-Path $p)){throw "Required path missing: $p"}
+          }
+          $tokens=$null;$errors=$null
+          [void][System.Management.Automation.Language.Parser]::ParseFile("$PWD\mt5\run_architecture_a_baseline_5y.ps1",[ref]$tokens,[ref]$errors)
+          if($errors.Count -gt 0){$errors|ForEach-Object{Write-Host $_.Message};throw 'Runner parser validation failed'}
+
+      - name: Run Architecture A baseline
+        shell: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "& '{0}'"
+        run: |
+          & "$PWD\mt5\run_architecture_a_baseline_5y.ps1" `
+            -MetaTraderRoot $env:MT5_ROOT `
+            -RepoRoot $PWD `
+            -Deposit ([double]"${{ github.event_name == 'workflow_dispatch' && inputs.deposit || '10000' }}") `
+            -Leverage "1:${{ github.event_name == 'workflow_dispatch' && inputs.leverage || '100' }}"
+
+      - name: Upload Architecture A artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mt5-architecture-a-baseline-5y-${{ github.run_id }}
+          path: artifacts/architecture-a-baseline-5y/**
+          if-no-files-found: warn
+          retention-days: 30
