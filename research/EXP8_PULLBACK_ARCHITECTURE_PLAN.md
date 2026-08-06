@@ -22,38 +22,36 @@ EXP2 is the strongest verified candidate but fails the formal robustness gate. E
 
 Stop tuning trigger-clearance bands. Test a genuinely different pullback-formation hypothesis: shallow pullbacks form low-quality setups because price has not retraced enough to create favorable reward-to-risk and is more likely to fail quickly.
 
-The first real-MT5 candidate will require minimum pullback depth at setup formation, before the trigger state is created. This is intentionally upstream of the trigger and must be evaluated through a full MT5 rerun rather than static trade deletion.
+The first real-MT5 candidate will require minimum wick-based pullback depth at setup qualification, before the trigger state is created. This is intentionally upstream of the trigger and must be evaluated through a full MT5 rerun rather than static trade deletion.
 
-## Frozen EXP8 rule
+## Frozen rule
 
-The threshold is fixed before any EXP8 result is observed.
+- Long pullback depth: `(EMA12 - candle low) / ATR`
+- Short pullback depth: `(candle high - EMA12) / ATR`
+- Minimum required depth: `0.50 ATR`
+- The threshold is a fixed round structural value selected before any EXP8 result is observed.
+- The only trading-rule change is the additional depth qualification inside the existing long and short pullback predicates.
 
-- Threshold: `0.50 ATR`
-- Long pullback depth: `(EMA12 - candle_low) / ATR`
-- Short pullback depth: `(candle_high - EMA12) / ATR`
-- Long setup may be created only when long pullback depth is `>= 0.50`.
-- Short setup may be created only when short pullback depth is `>= 0.50`.
-- ATR, EMA12, candle high, and candle low must be taken from the same completed bar already evaluated by the existing EXP2 pullback condition.
-- No band-width normalization, no EMA50-distance rule, and no second threshold are permitted in this frozen candidate.
+## Explicit replacement semantics — Option A
 
-The value `0.50 ATR` is a round structural threshold selected before the run. It is not the result of searching EXP8 outcomes.
+EXP8 intentionally applies the same 0.50 ATR depth standard to both first-time pullback creation and replacement pullbacks because the existing state machine uses the same long/short pullback predicates at both call sites.
 
-## State-machine isolation requirement
+Consequences are part of the single frozen hypothesis:
 
-The only behavioral change is candidate qualification at pullback setup creation.
+- A shallow candle cannot create a new setup.
+- A shallow candle also cannot replace or refresh an already-active setup.
+- Therefore, an active setup may advance toward expiry one bar earlier than under EXP2 when a would-be replacement candle fails the new depth standard.
+- Later completed bars are still evaluated normally and may qualify as replacement pullbacks if they meet the unchanged baseline pullback rules plus the frozen 0.50 ATR depth requirement.
+- Trigger logic, setup lifetime length, cooldown, risk, exits, and all other state-machine rules remain unchanged.
 
-- A bar that satisfies the original EXP2 pullback condition but fails the new depth minimum must not create or replace a setup.
-- The setup state, expiry logic, trigger logic, cooldown, risk, exits, and trade management remain identical to EXP2.
-- Later completed bars remain eligible for independent evaluation under the original Step 3 loop. Therefore, rejecting one shallow bar does not disable future pullback hunting and does not create a new cooldown or suppression state.
-- The EXP2-to-EXP8 diff must show the depth predicate added only to `LongPullbackCondition` and `ShortPullbackCondition`, or to one pure helper called only by those two conditions.
-- Any modification to setup replacement, setup expiry, trigger confirmation, or reset behavior invalidates the experiment as non-isolated.
+This replacement/expiry interaction is not described as unchanged. It is an acknowledged second-order consequence of consistently redefining what counts as a valid pullback candle. The implementation must not introduce a separate creation-only path, parameter, wrapper, or special replacement exception.
 
 ## Development protocol
 
 1. Rebuild the authoritative EXP2 source and verify its established hash.
-2. Add exactly the frozen `0.50 ATR` pullback-depth condition; do not alter exits, risk, sessions, cooldown, setup expiry, replacement behavior, or trigger confirmation.
-3. Produce an exact EXP2-to-EXP8 diff and source hashes.
-4. Perform a state-machine isolation review before compiling.
+2. Add exactly one shared pullback-qualification condition using the frozen wick-depth formula; do not alter exits, risk, sessions, cooldown, trigger confirmation, or the numeric setup lifetime.
+3. Confirm by diff that both creation and replacement continue to call the same pullback predicates and no call-site branching was added.
+4. Produce an exact EXP2-to-EXP8 diff and source hashes.
 5. Compile with 0 errors and 0 warnings.
 6. Run the same five fixed annual windows on 100% real ticks.
 7. Reject EXP8 unless it passes all formal gates:
