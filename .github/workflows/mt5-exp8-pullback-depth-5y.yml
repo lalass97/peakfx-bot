@@ -38,6 +38,16 @@ jobs:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.target_ref || 'research/exp8-pullback-architecture' }}
           fetch-depth: 0
 
+      - name: Restore authoritative EXP2 builder
+        shell: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "& '{0}'"
+        run: |
+          $ErrorActionPreference = "Stop"
+          $builder = "$PWD/research/build_confirmed_breakout_exp2_candidate.py"
+          if (-not (Test-Path $builder)) {
+            git show "origin/research/robustness-5y-exp2-exp3a-exp6a:research/build_confirmed_breakout_exp2_candidate.py" | Set-Content -LiteralPath $builder -Encoding UTF8
+          }
+          if (-not (Test-Path $builder)) { throw "EXP2 builder restore failed" }
+
       - name: Enable PowerShell scripts
         shell: cmd
         run: reg.exe ADD "HKCU\Software\Microsoft\PowerShell\1\ShellIds\Microsoft.PowerShell" /v ExecutionPolicy /t REG_SZ /d RemoteSigned /f
