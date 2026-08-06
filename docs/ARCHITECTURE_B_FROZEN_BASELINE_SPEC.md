@@ -71,13 +71,24 @@ Initial stop distance from entry equals 1.0 times the stored mean compression-ph
 
 No candle-body stop, box-width stop, break-even move, or minimum-distance override is permitted in the baseline.
 
+## Configuration selection record
+The initial external proposal contained six configurations, including two box-width-stop variants. Before any Architecture B baseline result was generated or viewed, the project deliberately reduced the matrix to four configurations.
+
+Reason for the reduction:
+- the box-width stop introduced a third independent architecture axis in addition to expansion strength and exit style;
+- box width can vary materially across compression phases and would make risk-distance behavior less comparable across configurations;
+- retaining one common stop basis isolates the two questions this baseline is intended to answer: required expansion strength and exit shape;
+- removing the two box-width variants reduces selection bias and makes any result easier to interpret.
+
+Therefore B05 and B06 from the preliminary proposal were rejected before implementation and are not reserved, deferred, or eligible for later testing. The four configurations below are the complete frozen baseline set. This decision predates all baseline reports and is part of the specification hash.
+
 ## Four frozen baseline configurations
-| ID | Expansion multiplier | Exit style |
-|---|---:|---|
-| B01 | 1.5x | Fixed 2.0R target |
-| B02 | 2.0x | Fixed 2.0R target |
-| B03 | 1.5x | Fast-fail time exit |
-| B04 | 2.0x | Fast-fail time exit |
+| ID | Expansion multiplier | Exit style | Stop basis |
+|---|---:|---|---|
+| B01 | 1.5x | Fixed 2.0R target | 1.0x stored compression H1 ATR |
+| B02 | 2.0x | Fixed 2.0R target | 1.0x stored compression H1 ATR |
+| B03 | 1.5x | Fast-fail time exit | 1.0x stored compression H1 ATR |
+| B04 | 2.0x | Fast-fail time exit | 1.0x stored compression H1 ATR |
 
 ### Fixed-target exit
 - TP at 2.0 times initial risk distance
