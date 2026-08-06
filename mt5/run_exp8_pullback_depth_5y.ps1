@@ -46,11 +46,14 @@ $binary=[IO.Path]::ChangeExtension($deployed,'.ex5')
 if(-not(Test-Path $binary)){throw 'EXP8 binary missing'}
 
 $diffPath=Join-Path $ResultsRoot 'exp2_to_exp8.diff.txt'
-$oldNative=$PSNativeCommandUseErrorActionPreference
-$PSNativeCommandUseErrorActionPreference=$false
+$nativePrefVar=Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue
+if($nativePrefVar){$oldNative=$nativePrefVar.Value;$PSNativeCommandUseErrorActionPreference=$false}
+$oldErrorPreference=$ErrorActionPreference
+$ErrorActionPreference='Continue'
 $diffOutput=& git -c core.autocrlf=false diff --no-index --no-textconv -- $exp2 $exp8 2>$null
 $diffExit=$LASTEXITCODE
-$PSNativeCommandUseErrorActionPreference=$oldNative
+$ErrorActionPreference=$oldErrorPreference
+if($nativePrefVar){$PSNativeCommandUseErrorActionPreference=$oldNative}
 $diffOutput | Set-Content $diffPath -Encoding UTF8
 if($diffExit -gt 1){throw "Diff generation failed with exit code $diffExit"}
 
