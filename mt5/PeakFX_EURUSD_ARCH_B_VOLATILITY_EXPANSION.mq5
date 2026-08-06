@@ -1,11 +1,13 @@
 #property strict
-#property version   "1.00"
+#property version   "1.01"
 #property description "PeakFX Architecture B frozen pre-structure-aligned volatility expansion"
 
 #include <Trade/Trade.mqh>
 
 input string InpSymbol = "EURUSD";
 input double InpRiskPercent = 0.25;
+input double InpDailyLossLimitPercent = 1.0;
+input double InpWeeklyLossLimitPercent = 2.0;
 input int InpAtrPeriod = 14;
 input int InpPercentileLookback = 180;
 input double InpCompressionPercentile = 0.25;
@@ -25,8 +27,11 @@ int hAtrD1 = INVALID_HANDLE;
 int hAtrH1 = INVALID_HANDLE;
 datetime lastH1Bar = 0;
 datetime entryBarTime = 0;
-long activeBoxKey = 0;
 long tradedBoxKey = 0;
+int equityDayKey = 0;
+int equityWeekKey = 0;
+double dayStartEquity = 0.0;
+double weekStartEquity = 0.0;
 
 struct CompressionState
 {
@@ -45,6 +50,14 @@ int UtcDateKey(datetime t)
    MqlDateTime d;
    TimeToStruct(t,d);
    return d.year*10000+d.mon*100+d.day;
+}
+
+int UtcWeekKey(datetime t)
+{
+   MqlDateTime d;
+   TimeToStruct(t,d);
+   const datetime monday=t-(d.day_of_week==0 ? 6 : d.day_of_week-1)*86400;
+   return UtcDateKey(monday);
 }
 
 datetime ToUtc(datetime serverTime)
@@ -71,6 +84,32 @@ bool HasOurPosition()
 {
    if(!PositionSelect(InpSymbol)) return false;
    return (ulong)PositionGetInteger(POSITION_MAGIC)==InpMagic;
+}
+
+void RefreshLossAnchors(datetime utcNow)
+{
+   const int dayKey=UtcDateKey(utcNow);
+   const int weekKey=UtcWeekKey(utcNow);
+   const double equity=AccountInfoDouble(ACCOUNT_EQUITY);
+   if(equityDayKey!=dayKey || dayStartEquity<=0.0)
+   {
+      equityDayKey=dayKey;
+      dayStartEquity=equity;
+   }
+   if(equityWeekKey!=weekKey || weekStartEquity<=0.0)
+   {
+      equityWeekKey=weekKey;
+      weekStartEquity=equity;
+   }
+}
+
+bool LossLimitsAllowEntry(datetime utcNow)
+{
+   RefreshLossAnchors(utcNow);
+   const double equity=AccountInfoDouble(ACCOUNT_EQUITY);
+   if(dayStartEquity>0.0 && equity<=dayStartEquity*(1.0-InpDailyLossLimitPercent/100.0)) return false;
+   if(weekStartEquity>0.0 && equity<=weekStartEquity*(1.0-InpWeeklyLossLimitPercent/100.0)) return false;
+   return true;
 }
 
 bool GetAtr(int handle,int shift,double &value)
@@ -110,6 +149,7 @@ bool DailyCompressed(int shift)
 
 bool IsSwingHigh(int shift)
 {
+   if(shift<3) return false;
    const double h=iHigh(InpSymbol,PERIOD_D1,shift);
    if(h<=0.0) return false;
    return h>iHigh(InpSymbol,PERIOD_D1,shift+1) && h>iHigh(InpSymbol,PERIOD_D1,shift+2)
@@ -118,6 +158,7 @@ bool IsSwingHigh(int shift)
 
 bool IsSwingLow(int shift)
 {
+   if(shift<3) return false;
    const double l=iLow(InpSymbol,PERIOD_D1,shift);
    if(l<=0.0) return false;
    return l<iLow(InpSymbol,PERIOD_D1,shift+1) && l<iLow(InpSymbol,PERIOD_D1,shift+2)
@@ -128,13 +169,13 @@ int PreCompressionDirection(int compressionStartShift)
 {
    double highs[2],lows[2];
    int hc=0,lc=0;
-   for(int s=compressionStartShift+2;s<compressionStartShift+400 && (hc<2 || lc<2);s++)
+   // +3 ensures both right-side confirmation bars completed before compression began.
+   for(int s=compressionStartShift+3;s<compressionStartShift+400 && (hc<2 || lc<2);s++)
    {
       if(hc<2 && IsSwingHigh(s)) highs[hc++]=iHigh(InpSymbol,PERIOD_D1,s);
       if(lc<2 && IsSwingLow(s)) lows[lc++]=iLow(InpSymbol,PERIOD_D1,s);
    }
    if(hc<2 || lc<2) return 0;
-   // arrays are newest eligible first, then older
    if(highs[0]>highs[1] && lows[0]>lows[1]) return 1;
    if(highs[0]<highs[1] && lows[0]<lows[1]) return -1;
    return 0;
@@ -164,13 +205,11 @@ bool MeanCompressionH1Atr(datetime startTime,datetime endTime,double &meanAtr)
 bool BuildCompressionState(CompressionState &s)
 {
    s.valid=false;
-   int endShift=1;
+   const int endShift=1; // latest completed D1 bar; expansion is detected intraday after it
    int count=0;
-   while(endShift+count<InpMaxCompressionDays+2 && DailyCompressed(endShift+count)) count++;
+   while(count<InpMaxCompressionDays && DailyCompressed(endShift+count)) count++;
    if(count<InpMinCompressionDays) return false;
-
-   // More than max consecutive compressed days invalidates the phase.
-   if(count>=InpMaxCompressionDays && DailyCompressed(endShift+count)) return false;
+   if(count==InpMaxCompressionDays && DailyCompressed(endShift+count)) return false;
 
    const int startShift=endShift+count-1;
    const int direction=PreCompressionDirection(startShift);
@@ -196,7 +235,7 @@ bool BuildCompressionState(CompressionState &s)
    s.boxHigh=high;
    s.boxLow=low;
    s.meanH1Atr=meanAtr;
-   s.key=(long)UtcDateKey(ToUtc(start))*100000L+(long)UtcDateKey(ToUtc(end));
+   s.key=(long)UtcDateKey(ToUtc(start))*100000000L+(long)UtcDateKey(ToUtc(end));
    return true;
 }
 
@@ -214,10 +253,9 @@ bool WeeklyEntryAllowed(datetime utc)
 {
    MqlDateTime d;
    TimeToStruct(utc,d);
-   if(d.day_of_week==0) return false;
+   if(d.day_of_week==0 || d.day_of_week==6) return false;
    if(d.day_of_week==1 && d.hour<2) return false;
    if(d.day_of_week==5 && d.hour>=20) return false;
-   if(d.day_of_week==6) return false;
    return true;
 }
 
@@ -251,11 +289,13 @@ double VolumeForRisk(ENUM_ORDER_TYPE type,double entry,double stop)
    return NormalizeVolume(riskMoney/oneLotLoss);
 }
 
-bool StopValid(double entry,double sl)
+bool StopsValid(double entry,double sl,double tp)
 {
    const double point=SymbolInfoDouble(InpSymbol,SYMBOL_POINT);
    const double minDist=(double)SymbolInfoInteger(InpSymbol,SYMBOL_TRADE_STOPS_LEVEL)*point;
-   return MathAbs(entry-sl)>=minDist;
+   if(MathAbs(entry-sl)<minDist) return false;
+   if(tp>0.0 && MathAbs(tp-entry)<minDist) return false;
+   return true;
 }
 
 void ManageFastFail()
@@ -268,12 +308,10 @@ void ManageFastFail()
 
 void EvaluateEntry(datetime utcNow)
 {
-   if(HasOurPosition() || !WeeklyEntryAllowed(utcNow) || !SpreadAllowed()) return;
+   if(HasOurPosition() || !WeeklyEntryAllowed(utcNow) || !SpreadAllowed() || !LossLimitsAllowEntry(utcNow)) return;
 
    CompressionState s;
-   if(!BuildCompressionState(s)) return;
-   activeBoxKey=s.key;
-   if(tradedBoxKey==s.key) return;
+   if(!BuildCompressionState(s) || tradedBoxKey==s.key) return;
 
    const double signalClose=iClose(InpSymbol,PERIOD_H1,1);
    const double signalHigh=iHigh(InpSymbol,PERIOD_H1,1);
@@ -295,7 +333,7 @@ void EvaluateEntry(datetime utcNow)
       const double sl=NormalizeDouble(entry-s.meanH1Atr,digits);
       const double tp=InpFastFailExit ? 0.0 : NormalizeDouble(entry+InpTargetR*s.meanH1Atr,digits);
       const double volume=VolumeForRisk(ORDER_TYPE_BUY,entry,sl);
-      if(volume>0.0 && StopValid(entry,sl) && trade.Buy(volume,InpSymbol,0.0,sl,tp,"ARCH_B"))
+      if(volume>0.0 && StopsValid(entry,sl,tp) && trade.Buy(volume,InpSymbol,0.0,sl,tp,"ARCH_B"))
       {
          tradedBoxKey=s.key;
          entryBarTime=iTime(InpSymbol,PERIOD_H1,0);
@@ -307,7 +345,7 @@ void EvaluateEntry(datetime utcNow)
       const double sl=NormalizeDouble(entry+s.meanH1Atr,digits);
       const double tp=InpFastFailExit ? 0.0 : NormalizeDouble(entry-InpTargetR*s.meanH1Atr,digits);
       const double volume=VolumeForRisk(ORDER_TYPE_SELL,entry,sl);
-      if(volume>0.0 && StopValid(entry,sl) && trade.Sell(volume,InpSymbol,0.0,sl,tp,"ARCH_B"))
+      if(volume>0.0 && StopsValid(entry,sl,tp) && trade.Sell(volume,InpSymbol,0.0,sl,tp,"ARCH_B"))
       {
          tradedBoxKey=s.key;
          entryBarTime=iTime(InpSymbol,PERIOD_H1,0);
@@ -322,6 +360,8 @@ int OnInit()
    hAtrH1=iATR(InpSymbol,PERIOD_H1,InpAtrPeriod);
    if(hAtrD1==INVALID_HANDLE || hAtrH1==INVALID_HANDLE) return INIT_FAILED;
    trade.SetExpertMagicNumber(InpMagic);
+   const datetime utcNow=ToUtc(TimeTradeServer());
+   RefreshLossAnchors(utcNow);
    return INIT_SUCCEEDED;
 }
 
@@ -334,6 +374,7 @@ void OnDeinit(const int reason)
 void OnTick()
 {
    const datetime utcNow=ToUtc(TimeTradeServer());
+   RefreshLossAnchors(utcNow);
    ForceFlatBeforeWeeklyClose(utcNow);
 
    const datetime currentBar=iTime(InpSymbol,PERIOD_H1,0);
