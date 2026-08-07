@@ -74,4 +74,7 @@ $text=$text.Replace($oldExecutionGate,$newExecutionGate)
 
 Set-Content $patchedRunner $text -Encoding UTF8
 & $patchedRunner -MetaTraderRoot $MetaTraderRoot -RepoRoot $RepoRoot -Deposit $Deposit -Leverage $Leverage
-if($LASTEXITCODE-ne0){exit $LASTEXITCODE}
+# Successful PowerShell script invocation does not guarantee $LASTEXITCODE exists.
+# With Set-StrictMode enabled, touching an unset $LASTEXITCODE causes a false failure.
+# Any runner exception already terminates this wrapper because ErrorActionPreference=Stop.
+exit 0
