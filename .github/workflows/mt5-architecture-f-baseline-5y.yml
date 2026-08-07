@@ -1,0 +1,85 @@
+name: MT5 Architecture F Baseline 5Y
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_ref:
+        description: Exact branch or commit containing Architecture F baseline
+        required: true
+        default: "research/architecture-f-london-opening-range"
+      deposit:
+        required: true
+        default: "10000"
+      leverage:
+        required: true
+        default: "100"
+  push:
+    paths:
+      - ".github/workflows/mt5-architecture-f-baseline-5y.yml"
+
+permissions:
+  contents: read
+
+env:
+  MT5_ROOT: "C:\\Program Files\\MetaTrader 5"
+
+jobs:
+  baseline:
+    name: Run frozen Architecture F baseline matrix
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 600
+    steps:
+      - name: Checkout exact Architecture F ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.target_ref || 'research/architecture-f-london-opening-range' }}
+          fetch-depth: 0
+
+      - name: Enable PowerShell scripts
+        shell: cmd
+        run: reg.exe ADD "HKCU\Software\Microsoft\PowerShell\1\ShellIds\Microsoft.PowerShell" /v ExecutionPolicy /t REG_SZ /d RemoteSigned /f
+
+      - name: Validate frozen inputs
+        shell: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "& '{0}'"
+        run: |
+          $ErrorActionPreference='Stop'
+          $required=@(
+            "$env:MT5_ROOT\terminal64.exe",
+            "$env:MT5_ROOT\metaeditor64.exe",
+            "$PWD\mt5\run_architecture_f_baseline_5y.ps1",
+            "$PWD\mt5\PeakFX_EURUSD_ARCH_F_LONDON_OPENING_RANGE.mq5",
+            "$PWD\docs\ARCHITECTURE_F_FROZEN_BASELINE_SPEC.md",
+            "$PWD\scripts\verify_architecture_f_artifact.py"
+          )
+          foreach($p in $required){if(-not(Test-Path $p)){throw "Required path missing: $p"}}
+          $tokens=$null;$errors=$null
+          [void][System.Management.Automation.Language.Parser]::ParseFile("$PWD\mt5\run_architecture_f_baseline_5y.ps1",[ref]$tokens,[ref]$errors)
+          if($errors.Count -gt 0){$errors|ForEach-Object{Write-Host $_.Message};throw 'Architecture F runner parser validation failed'}
+          python -m py_compile "$PWD\scripts\verify_architecture_f_artifact.py"
+          if($LASTEXITCODE-ne0){throw 'Architecture F verifier syntax validation failed'}
+
+      - name: Run Architecture F frozen baseline matrix
+        shell: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "& '{0}'"
+        run: |
+          & "$PWD\mt5\run_architecture_f_baseline_5y.ps1" `
+            -MetaTraderRoot $env:MT5_ROOT `
+            -RepoRoot $PWD `
+            -Deposit ([double]"${{ github.event_name == 'workflow_dispatch' && inputs.deposit || '10000' }}") `
+            -Leverage "1:${{ github.event_name == 'workflow_dispatch' && inputs.leverage || '100' }}"
+
+      - name: Independently verify complete artifact
+        shell: powershell
+        run: |
+          python "$PWD\scripts\verify_architecture_f_artifact.py" `
+            "$PWD\artifacts\architecture-f-baseline-5y" `
+            --output "$PWD\artifacts\architecture-f-baseline-5y\independent_verification.json"
+          if($LASTEXITCODE-ne0){throw 'Independent Architecture F artifact verification failed'}
+
+      - name: Upload Architecture F baseline artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mt5-architecture-f-baseline-5y-${{ github.run_id }}
+          path: artifacts/architecture-f-baseline-5y/**
+          if-no-files-found: error
+          retention-days: 30
