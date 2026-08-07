@@ -1,0 +1,60 @@
+name: MT5 Architecture J Baseline 5Y
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_ref:
+        required: true
+        default: "research/architecture-j-prior-day-failed-breakout"
+      deposit:
+        required: true
+        default: "10000"
+      leverage:
+        required: true
+        default: "100"
+  push:
+    paths:
+      - ".github/workflows/mt5-architecture-j-baseline-5y.yml"
+
+permissions:
+  contents: read
+
+env:
+  MT5_ROOT: "C:\\Program Files\\MetaTrader 5"
+
+jobs:
+  baseline:
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 600
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.target_ref || 'research/architecture-j-prior-day-failed-breakout' }}
+          fetch-depth: 0
+      - name: Validate frozen inputs
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $required=@("$env:MT5_ROOT\terminal64.exe","$env:MT5_ROOT\metaeditor64.exe","$PWD\mt5\run_architecture_j_baseline_5y.ps1","$PWD\mt5\PeakFX_EURUSD_ARCH_J_PRIOR_DAY_FAILED_BREAKOUT.mq5","$PWD\docs\ARCHITECTURE_J_FROZEN_BASELINE_SPEC.md","$PWD\scripts\verify_architecture_j_artifact.py")
+          foreach($p in $required){if(-not(Test-Path $p)){throw "Required path missing: $p"}}
+          $tokens=$null;$errors=$null;[void][System.Management.Automation.Language.Parser]::ParseFile("$PWD\mt5\run_architecture_j_baseline_5y.ps1",[ref]$tokens,[ref]$errors)
+          if($errors.Count -gt 0){$errors|ForEach-Object{Write-Host $_.Message};throw 'Architecture J runner parser validation failed'}
+          python -m py_compile "$PWD\scripts\verify_architecture_j_artifact.py"
+          if($LASTEXITCODE-ne0){throw 'Architecture J verifier syntax validation failed'}
+      - name: Run frozen Architecture J baseline
+        shell: powershell
+        run: |
+          & "$PWD\mt5\run_architecture_j_baseline_5y.ps1" -MetaTraderRoot $env:MT5_ROOT -RepoRoot $PWD -Deposit ([double]"${{ github.event_name == 'workflow_dispatch' && inputs.deposit || '10000' }}") -Leverage "1:${{ github.event_name == 'workflow_dispatch' && inputs.leverage || '100' }}"
+      - name: Verify artifact
+        shell: powershell
+        run: |
+          python "$PWD\scripts\verify_architecture_j_artifact.py" "$PWD\artifacts\architecture-j-baseline-5y" --output "$PWD\artifacts\architecture-j-baseline-5y\independent_verification.json"
+          if($LASTEXITCODE-ne0){throw 'Architecture J verification failed'}
+      - name: Upload artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mt5-architecture-j-baseline-5y-${{ github.run_id }}
+          path: artifacts/architecture-j-baseline-5y/**
+          if-no-files-found: error
+          retention-days: 30
