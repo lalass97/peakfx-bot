@@ -22,14 +22,23 @@ jobs:
         run: |
           test -f docs/BTCUSDT_ARCH_A_FROZEN_BASELINE_SPEC.md
           test -f research/backtest_btcusdt_arch_a.py
+          test -f research/diagnose_btcusdt_arch_a.py
           python -m py_compile research/backtest_btcusdt_arch_a.py
+          python -m py_compile research/diagnose_btcusdt_arch_a.py
       - name: Run frozen BTCUSDT Architecture A baseline
         env:
           BTC_OUT: artifacts/btcusdt-arch-a-baseline
           BTC_CACHE: artifacts/btcusdt-arch-a-baseline/data
         run: python research/backtest_btcusdt_arch_a.py
-      - name: Show summary
+      - name: Run verified diagnostic replay
+        env:
+          BTC_OUT: artifacts/btcusdt-arch-a-baseline
+          BTC_CACHE: artifacts/btcusdt-arch-a-baseline/data
+        run: python research/diagnose_btcusdt_arch_a.py
+      - name: Show baseline summary
         run: cat artifacts/btcusdt-arch-a-baseline/summary.csv
+      - name: Show diagnostic summary
+        run: cat artifacts/btcusdt-arch-a-baseline/diagnostic_summary.csv
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -37,5 +46,10 @@ jobs:
           path: |
             artifacts/btcusdt-arch-a-baseline/results.json
             artifacts/btcusdt-arch-a-baseline/summary.csv
+            artifacts/btcusdt-arch-a-baseline/diagnostics.json
+            artifacts/btcusdt-arch-a-baseline/diagnostic_summary.csv
+            artifacts/btcusdt-arch-a-baseline/trades.csv
+            artifacts/btcusdt-arch-a-baseline/monthly.csv
+            artifacts/btcusdt-arch-a-baseline/equity_curve.csv
           if-no-files-found: error
           retention-days: 30
