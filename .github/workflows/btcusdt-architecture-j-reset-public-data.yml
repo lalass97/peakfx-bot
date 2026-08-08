@@ -1,0 +1,42 @@
+name: BTCUSDT Architecture J Reset Public Data
+on:
+  push:
+    paths:
+      - '.github/workflows/btcusdt-architecture-j-reset-public-data.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  baseline:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: research/btcusdt-jkl-reset-architecture-j-vol-expansion
+          fetch-depth: 0
+      - name: Validate frozen sequencing and source
+        run: |
+          test "$(git rev-parse d5db540afe97e7bcefe7da010b480647382e3d16)" = "d5db540afe97e7bcefe7da010b480647382e3d16"
+          test "$(git rev-parse 6ac423ec430928c6db79b5e4f2bf8d397b7a4923^)" = "d5db540afe97e7bcefe7da010b480647382e3d16"
+          test "$(git rev-parse c342ebd4be14ccaf26bca2ed1d46374d1b232e3a^)" = "6ac423ec430928c6db79b5e4f2bf8d397b7a4923"
+          test -f research/BTCUSDT_JKL_RESEARCH_RESET_PROTOCOL.md
+          test -f research/BTCUSDT_ARCHITECTURE_J_FROZEN_SPEC.md
+          test -f research/backtest_btcusdt_arch_j.py
+          python -m py_compile research/backtest_btcusdt_arch_j.py
+      - name: Run staged Architecture J baseline
+        env:
+          BTC_OUT: artifacts/btcusdt-arch-j-reset
+          BTC_CACHE: artifacts/btcusdt-arch-j-reset/data
+        run: python research/backtest_btcusdt_arch_j.py
+      - name: Show summary
+        run: cat artifacts/btcusdt-arch-j-reset/summary.csv
+      - uses: actions/upload-artifact@v4
+        with:
+          name: btcusdt-architecture-j-reset-${{ github.run_id }}
+          path: |
+            artifacts/btcusdt-arch-j-reset/results.json
+            artifacts/btcusdt-arch-j-reset/summary.csv
+            artifacts/btcusdt-arch-j-reset/trades.csv
+            artifacts/btcusdt-arch-j-reset/data_hashes.csv
+          if-no-files-found: error
+          retention-days: 30
