@@ -1,0 +1,73 @@
+//@version=6
+strategy("PeakFX BTCUSDT Arch A — H4 Trend / H1 Breakout",
+     overlay=true,
+     initial_capital=10000,
+     currency=currency.USD,
+     pyramiding=0,
+     commission_type=strategy.commission.percent,
+     commission_value=0.10,
+     process_orders_on_close=false,
+     calc_on_order_fills=true,
+     margin_long=100,
+     margin_short=100)
+
+// Frozen Architecture A inputs. Run only the four declared matrix combinations.
+channelLen = input.int(20, "H1 channel length", options=[20, 40])
+targetR    = input.float(2.0, "Target R", options=[2.0, 3.0])
+riskPct    = input.float(0.25, "Risk % of equity", minval=0.25, maxval=0.25)
+atrMult    = input.float(2.0, "ATR stop multiple", minval=2.0, maxval=2.0)
+
+// Frozen development date range. OOS begins 2026-01-01 and must remain locked until development passes.
+devStart = timestamp("UTC", 2021, 1, 1, 0, 0)
+devEnd   = timestamp("UTC", 2025, 12, 31, 23, 59)
+inDevelopment = time >= devStart and time <= devEnd
+
+// H4 trend regime using completed H4 bars only.
+h4Close = request.security(syminfo.tickerid, "240", close[1], lookahead=barmerge.lookahead_off)
+h4Ema200 = request.security(syminfo.tickerid, "240", ta.ema(close, 200)[1], lookahead=barmerge.lookahead_off)
+h4Ema200Prev4 = request.security(syminfo.tickerid, "240", ta.ema(close, 200)[5], lookahead=barmerge.lookahead_off)
+trendLong = h4Close > h4Ema200 and h4Ema200 > h4Ema200Prev4
+
+// H1 signal components. Script is intended to run on a standard 1H BTC/USDT chart.
+atr14 = ta.atr(14)
+priorHigh = ta.highest(high[1], channelLen)
+breakout = close > priorHigh
+
+// Risk model: 0.25% equity risk, no leverage, notional capped at strategy equity.
+riskCash = strategy.equity * (riskPct / 100.0)
+stopDistance = atr14 * atrMult
+rawQty = stopDistance > 0 ? riskCash / stopDistance : 0.0
+maxSpotQty = close > 0 ? strategy.equity / close : 0.0
+qty = math.max(0.0, math.min(rawQty, maxSpotQty))
+
+canEnter = inDevelopment and barstate.isconfirmed and trendLong and breakout and strategy.position_size == 0 and qty > 0
+
+var float initialStop = na
+var float initialTarget = na
+
+if canEnter
+    // TradingView strategy market orders generated here fill under broker-emulator semantics,
+    // normally on the next available tick/bar because process_orders_on_close=false.
+    entryRef = close
+    initialStop := entryRef - stopDistance
+    initialTarget := entryRef + targetR * stopDistance
+    strategy.entry("Long", strategy.long, qty=qty)
+
+if strategy.position_size > 0
+    // Once filled, anchor exits to the actual average entry while preserving the signal ATR distance.
+    if na(initialStop) or na(initialTarget)
+        initialStop := strategy.position_avg_price - stopDistance
+        initialTarget := strategy.position_avg_price + targetR * stopDistance
+    strategy.exit("Long Exit", "Long", stop=initialStop, limit=initialTarget)
+else if strategy.position_size == 0 and strategy.position_size[1] > 0
+    initialStop := na
+    initialTarget := na
+
+plot(h4Ema200, "H4 EMA200", color=color.orange)
+plot(priorHigh, "Prior H1 channel high", color=color.new(color.blue, 35))
+bgcolor(trendLong ? color.new(color.green, 92) : na)
+
+// Visual guardrail if the user accidentally applies this script to a non-1H chart.
+wrongTf = timeframe.in_seconds() != 3600
+if barstate.islast and wrongTf
+    label.new(bar_index, high, "Use this frozen baseline on a STANDARD 1H BTC/USDT chart", style=label.style_label_down, textcolor=color.white, color=color.red)
