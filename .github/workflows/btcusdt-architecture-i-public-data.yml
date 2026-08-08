@@ -1,0 +1,43 @@
+name: BTCUSDT Architecture I Public Data
+on:
+  push:
+    paths:
+      - '.github/workflows/btcusdt-architecture-i-public-data.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  baseline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: research/btcusdt-architecture-i-weekend-weekday-carry
+          fetch-depth: 0
+      - name: Validate frozen sequencing and source
+        run: |
+          test "$(git rev-parse 8b721f538bf3aa18b0017df7bde13a3d4bd3fe03)" = "8b721f538bf3aa18b0017df7bde13a3d4bd3fe03"
+          test "$(git rev-parse bccb7a8d588e9c0b9acb9ffed4a257f14b36f4b4)" = "bccb7a8d588e9c0b9acb9ffed4a257f14b36f4b4"
+          test "$(git rev-parse bccb7a8d588e9c0b9acb9ffed4a257f14b36f4b4^)" = "8b721f538bf3aa18b0017df7bde13a3d4bd3fe03"
+          test -f research/BTCUSDT_ARCHITECTURE_I_FROZEN_SPEC.md
+          test -f research/backtest_btcusdt_arch_i.py
+          python -m py_compile research/backtest_btcusdt_arch_i.py
+      - name: Run frozen Architecture I baseline
+        env:
+          BTC_OUT: artifacts/btcusdt-arch-i-baseline
+          BTC_CACHE: artifacts/btcusdt-arch-i-baseline/data
+        run: python research/backtest_btcusdt_arch_i.py
+      - name: Show summary
+        run: cat artifacts/btcusdt-arch-i-baseline/summary.csv
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: btcusdt-architecture-i-public-data-${{ github.run_id }}
+          path: |
+            artifacts/btcusdt-arch-i-baseline/results.json
+            artifacts/btcusdt-arch-i-baseline/summary.csv
+            artifacts/btcusdt-arch-i-baseline/trades.csv
+            artifacts/btcusdt-arch-i-baseline/equity_curve.csv
+            artifacts/btcusdt-arch-i-baseline/data_hashes.csv
+          if-no-files-found: error
+          retention-days: 30
