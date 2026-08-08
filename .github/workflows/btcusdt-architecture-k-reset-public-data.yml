@@ -1,0 +1,35 @@
+name: BTCUSDT Architecture K Reset Public Data
+on:
+  push:
+    branches: [ main ]
+    paths: [ '.github/workflows/btcusdt-architecture-k-reset-public-data.yml' ]
+  workflow_dispatch:
+jobs:
+  baseline:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: research/btcusdt-jkl-reset-architecture-k-volume-shock
+          fetch-depth: 0
+      - name: Validate frozen sequencing and source
+        run: |
+          test "$(git rev-parse 6512cd53cb083bedf50653b85f65f408fa5efe63^)" = "7e2865c9144a0f25e4074093f51f7ccca7ed9adb"
+          test -f research/BTCUSDT_JKL_RESEARCH_RESET_PROTOCOL.md
+          test -f research/BTCUSDT_ARCHITECTURE_K_FROZEN_SPEC.md
+          test -f research/backtest_btcusdt_arch_k.py
+          python -m py_compile research/backtest_btcusdt_arch_k.py
+      - name: Run staged Architecture K baseline
+        env:
+          BTC_OUT: artifacts/btcusdt-arch-k-reset
+          BTC_CACHE: artifacts/btcusdt-arch-k-reset/data
+        run: python research/backtest_btcusdt_arch_k.py
+      - name: Show summary
+        run: cat artifacts/btcusdt-arch-k-reset/summary.csv
+      - uses: actions/upload-artifact@v4
+        with:
+          name: btcusdt-architecture-k-reset-${{ github.run_id }}
+          path: |
+            artifacts/btcusdt-arch-k-reset/results.json
+            artifacts/btcusdt-arch-k-reset/summary.csv
+          retention-days: 30
