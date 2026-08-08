@@ -1,0 +1,43 @@
+name: BTCUSDT Architecture E Public Data Baseline
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/btcusdt-architecture-e-public-data.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: research/btcusdt-architecture-e-h4-time-series-momentum
+          fetch-depth: 1
+      - name: Validate frozen spec and backtester
+        run: |
+          test -f docs/BTCUSDT_ARCH_E_FROZEN_BASELINE_SPEC.md
+          test -f research/backtest_btcusdt_arch_e.py
+          python -m py_compile research/backtest_btcusdt_arch_e.py
+      - name: Run frozen BTCUSDT Architecture E baseline
+        env:
+          BTC_OUT: artifacts/btcusdt-arch-e-baseline
+          BTC_CACHE: artifacts/btcusdt-arch-e-baseline/data
+        run: python research/backtest_btcusdt_arch_e.py
+      - name: Show summary
+        run: cat artifacts/btcusdt-arch-e-baseline/summary.csv
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: btcusdt-architecture-e-public-data-${{ github.run_id }}
+          path: |
+            artifacts/btcusdt-arch-e-baseline/results.json
+            artifacts/btcusdt-arch-e-baseline/summary.csv
+            artifacts/btcusdt-arch-e-baseline/trades.csv
+            artifacts/btcusdt-arch-e-baseline/equity_curve.csv
+          if-no-files-found: error
+          retention-days: 30
