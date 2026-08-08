@@ -1,0 +1,37 @@
+name: BTCUSDT Architecture L Reset Public Data
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/btcusdt-architecture-l-reset-public-data.yml'
+
+jobs:
+  baseline:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: research/btcusdt-jkl-reset-architecture-l-serial-persistence
+          fetch-depth: 0
+      - name: Validate frozen sequencing and source
+        run: |
+          test "$(git rev-parse 06b8be86288cc0ce328e8fe38d7d268a38cc4e50^)" = "d557a36cb71eda581436bb4c643abe46e2505b19"
+          test -f research/BTCUSDT_JKL_RESEARCH_RESET_PROTOCOL.md
+          test -f research/BTCUSDT_ARCHITECTURE_L_FROZEN_SPEC.md
+          test -f research/backtest_btcusdt_arch_l.py
+          python -m py_compile research/backtest_btcusdt_arch_l.py
+      - name: Run staged Architecture L baseline
+        env:
+          BTC_OUT: artifacts/btcusdt-arch-l-reset
+          BTC_CACHE: artifacts/btcusdt-arch-l-reset/data
+        run: python research/backtest_btcusdt_arch_l.py
+      - name: Show summary
+        run: cat artifacts/btcusdt-arch-l-reset/summary.csv
+      - uses: actions/upload-artifact@v4
+        with:
+          name: btcusdt-architecture-l-reset-${{ github.run_id }}
+          path: |
+            artifacts/btcusdt-arch-l-reset/results.json
+            artifacts/btcusdt-arch-l-reset/summary.csv
+          retention-days: 30
