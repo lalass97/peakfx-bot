@@ -15,6 +15,7 @@ Status: FROZEN BEFORE 2026 OOS DATA ACCESS
 - Initial OOS capital: 10,000 USDT.
 - Commission: 0.10% per order; baseline slippage 0.
 - Long-only, one position maximum, no leverage, 0.25% initial risk per trade, notional capped at current equity.
+- If a position remains open at the end of 2026-07-31, it is NOT fabricated as a closed trade. Endpoint equity/net profit is marked to the final completed H4 close with estimated exit commission included. Profit factor uses closed trades only.
 
 ## Frozen candidates
 - Primary: BE03 — ROC lookback 48 H4 bars, trail 4.0 ATR.
